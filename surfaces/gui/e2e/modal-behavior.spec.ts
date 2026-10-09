@@ -222,6 +222,7 @@ async function openYouTube(page: Page, lang = "zh") {
     const { capability } = route.request().postDataJSON();
     const results: Record<string, unknown> = {
       "library.list": { assets: [], total: 0 },
+      "activity.list": { items: [], total: 0 },
       "collection.preferences": { sources: [{ channel_id: "one", title: "Design Notes" }], excluded_channels: [] },
       "connection.status": { configured: false, authorized: false, subscription_count: 0 },
       "activity.snapshot": { queued: 0, acquiring: 0, generating: 0, ready: 0, failed: 0, unavailable: 0, drain_paused: false, model_ready: true, batch: { completed: 0, limit: 100 } },
