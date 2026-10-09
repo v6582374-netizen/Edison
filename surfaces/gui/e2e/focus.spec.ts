@@ -1,7 +1,7 @@
 import { test, expect, sendAppEvent } from "./fixtures";
 import type { Page } from "@playwright/test";
-async function open(page: Page) {
-  await page.addInitScript(() => localStorage.setItem("openworker.lang", "zh"));
+async function open(page: Page, lang = "zh") {
+  await page.addInitScript(value => localStorage.setItem("openworker.lang", value), lang);
   await page.goto("/?module=minimalism");
   await expect(page.getByRole("main", {name:"minimalism",exact:true})).toBeVisible();
 }
@@ -24,7 +24,7 @@ test("continuous task, capture, pointer priority, edit, persistence, and quiet h
   await expect(page.locator(".fm-task")).toHaveText("写完项目方案");
   await expect(page.getByRole("button", {name:/开始专注|退出专注|开启下一件/})).toHaveCount(0);
   await expect(page.locator(".fm-symbol, .fm-eyebrow, .fm-spotlight")).toHaveCount(0);
-  await expect(page.locator(".sidebar")).toBeHidden();
+  await expect(page.locator(".sidebar")).toBeInViewport();
   await expect(page.locator(".fm-task")).toHaveCSS("font-style","italic");
   await expect(page.locator(".fm-words")).toHaveCSS("background-color","rgba(0, 0, 0, 0)");
   await arrange(page);
@@ -76,11 +76,12 @@ test("keyboard sorting, canceled draft, navigation, and empty queue", async ({ p
   await page.getByRole("button", {name:"记下想法",exact:true}).click();
   await expect(page.getByLabel("先记下来", {exact:true})).toHaveValue("周末买笔记本");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", {name:"显示侧栏",exact:true}).click();
   await expect(page.getByTestId("nav-items")).toBeVisible();
   await expect(page.getByTestId("nav-minimalism")).toBeVisible();
   await page.keyboard.press("Control+b");
-  await expect(page.locator(".sidebar")).toBeHidden();
+  await expect(page.locator(".sidebar")).not.toBeInViewport();
+  await page.keyboard.press("Control+b");
+  await expect(page.locator(".sidebar")).toBeInViewport();
   await arrange(page);
   await page.getByRole("button", {name:"移除 散步",exact:true}).click();
   await page.getByRole("button", {name:"移除 写实验设计",exact:true}).click();
@@ -93,7 +94,10 @@ test("mobile touch priority, long typography, dark theme, and reduced motion", a
   await page.setViewportSize({width:390,height:844});
   await page.emulateMedia({reducedMotion:"reduce"});
   await page.addInitScript(() => localStorage.setItem("openwork-theme","dark"));
-  await open(page); await add(page,"读完这一页"); await add(page,"收拾书桌");
+  await open(page);
+  await expect(page.locator(".sidebar")).toBeInViewport();
+  await page.keyboard.press("Control+b");
+  await add(page,"读完这一页"); await add(page,"收拾书桌");
   await arrange(page);
   const handle = await page.getByRole("button", {name:"排序 收拾书桌",exact:true}).boundingBox();
   const first = await page.locator(".fm-queue li").first().boundingBox();
@@ -165,7 +169,7 @@ test("long queues use one hidden scroll area; outside dismissal preserves drafts
   await expect(page.getByRole("button",{name:"修改 事项 19：整理资料并确认下一步安排",exact:true})).toBeInViewport();
   expect(await panel.evaluate(el=>el.scrollTop)).toBe(0);
   await page.screenshot({path:"../../reports/minimalism-spotlight/queue-without-scrollbars.png",fullPage:true});
-  await page.mouse.click(90,180);
+  await page.locator(".focus-module").click({position:{x:30,y:180}});
   await expect(panel).toHaveCount(0);
   await expect(page.locator(".fm-task")).toHaveText("事项 1：整理资料并确认下一步安排");
   await page.getByRole("button",{name:"记下想法",exact:true}).click();
@@ -175,29 +179,51 @@ test("long queues use one hidden scroll area; outside dismissal preserves drafts
   await expect(panel).toBeVisible();
   await arrange(page);
   await expect(page.locator(".fm-queue li")).toHaveCount(19);
-  await page.mouse.click(90,180);
+  await page.locator(".focus-module").click({position:{x:30,y:180}});
   await expect(panel).toHaveCount(0);
   await page.getByRole("button",{name:"记下想法",exact:true}).click();
   await expect(page.getByLabel("先记下来",{exact:true})).toHaveValue("未提交的想法");
-  await page.mouse.click(90,180);
+  await page.locator(".focus-module").click({position:{x:30,y:180}});
   await expect(panel).toHaveCount(0);
 });
 
-test("task hover gently brightens without movement or layout change", async ({ page }) => {
-  await open(page); await add(page,"读完这一页");
+test("empty and populated task hover scales visibly; reduced motion stays still", async ({ page }) => {
+  await open(page,"en");
   const task=page.locator(".fm-task");
-  await page.mouse.move(0,0);
-  await expect(task).toHaveCSS("opacity","0.92");
-  const before=await task.boundingBox();
-  await task.hover();
-  await expect(task).toHaveCSS("opacity","1");
-  await expect(task).toHaveCSS("transform","none");
-  expect(await task.boundingBox()).toEqual(before);
-  await page.mouse.move(0,0);
-  await expect(task).toHaveCSS("opacity","0.92");
+  // Exercise the English empty-state text reported on the deployed site.
+  await expect(task).toHaveText("Begin with one thing.");
+  for (const populated of [false,true]) {
+    if (populated) {
+      await page.getByRole("button",{name:"Capture a thought",exact:true}).click();
+      await page.getByRole("textbox",{name:"Capture a thought",exact:true}).fill("Read this page");
+      await page.getByRole("button",{name:"Add",exact:true}).click();
+    }
+    await page.mouse.move(0,0);
+    await expect(task).toHaveCSS("opacity","0.9");
+    await expect(task).toHaveCSS("transform","matrix(1, 0, 0, 1, 0, 0)");
+    const before=await task.boundingBox();
+    await task.hover();
+    await expect(task).toHaveCSS("opacity","1");
+    await expect(task).toHaveCSS("transform","matrix(1.025, 0, 0, 1.025, 0, 0)");
+    expect((await task.boundingBox())!.width).toBeGreaterThan(before!.width*1.02);
+  }
   await page.emulateMedia({reducedMotion:"reduce"});
+  await expect(task).toHaveCSS("transform","none");
   await expect(task).toHaveCSS("transition-duration","0.08s");
-  await task.hover();
-  await expect(task).toHaveCSS("opacity","1");
-  expect(await task.boundingBox()).toEqual(before);
+});
+
+test("entering minimalism preserves the host sidebar preference", async ({page})=>{
+  await open(page);
+  await expect(page.locator(".sidebar")).toBeInViewport();
+  await expect(page.locator(".app")).not.toHaveClass(/nav-collapsed/);
+  await page.getByTestId("nav-items").click();
+  await page.getByTestId("nav-minimalism").click();
+  await expect(page.locator(".sidebar")).toBeInViewport();
+  await page.keyboard.press("Control+b");
+  await expect(page.locator(".app")).toHaveClass(/nav-collapsed/);
+  await page.reload();
+  await expect(page.getByRole("main",{name:"minimalism",exact:true})).toBeVisible();
+  await expect(page.locator(".app")).toHaveClass(/nav-collapsed/);
+  await page.keyboard.press("Control+b");
+  await expect(page.locator(".sidebar")).toBeInViewport();
 });
