@@ -1,6 +1,6 @@
 # Edison
 
-Edison's product language covers the YouTube reading workbench, the Minimalism object memory system, and Curriculum.
+Edison's product language covers the YouTube reading workbench, items object memory, minimalism focus, and Curriculum.
 
 ## YouTube reading language
 
@@ -92,7 +92,7 @@ _Avoid_: Summarization, free rewriting
 
 ## Object memory language
 
-**Minimalism**:
+**items**:
 The named module within Edison for the Object Memory System. The original standalone Minimalism application is its migration source.
 _Avoid_: Skills manager, a second independently maintained product
 
@@ -119,6 +119,16 @@ _Avoid_: AI cover, generated evidence
 **AI Memory Cover（AI 记忆封面）**:
 A generated visual representation of an object used as its cover, distinct from documentary photographs of the real object.
 _Avoid_: Archive photo, factual photographic evidence
+
+## Focus language
+
+**minimalism**:
+The module that presents one current task, advancing directly to the next when it is completed. Capture and priority ordering are available on demand.
+_Avoid_: Object memory, task dashboard
+
+**Current task（当前事项）**:
+The first task in the ordered queue, receiving the person's attention now. New captures append to the queue without replacing it.
+_Avoid_: Parallel task, focus mode toggle
 
 ## Curriculum language
 

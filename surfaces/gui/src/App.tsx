@@ -59,6 +59,7 @@ import { chooseFolder, isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { YouTubeView } from "./components/YouTubeView";
 import { MinimalismView } from "./components/MinimalismView";
+import { FocusView } from "./components/FocusView";
 import { CurriculumView } from "./components/CurriculumView";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -277,10 +278,12 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "minimalism" | "curriculum"
-  >("session");
+    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "items" | "minimalism" | "curriculum"
+  >(() => new URLSearchParams(location.search).get("module") === "minimalism" ? "minimalism" : "session");
+  const focusMode = surface === "minimalism";
+  const focusCompact = focusMode;
   // Preserve a dossier draft or generation preview while visiting another host module.
-  const [minimalismOpened, setMinimalismOpened] = useState(false);
+  const [itemsOpened, setItemsOpened] = useState(false);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
@@ -330,10 +333,11 @@ export function App() {
     try { localStorage.setItem(NAV_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* best effort */ }
   }, []);
   const toggleNav = useCallback(() => {
+    if (focusCompact) { setNavPeek(value => !value); return; }
     setNavPeek(false);
     navBeforePreview.current = null; // a manual toggle takes control from the artifact auto-collapse
     setNavCollapsedPersist(!navCollapsed);
-  }, [navCollapsed, setNavCollapsedPersist]);
+  }, [navCollapsed, setNavCollapsedPersist, focusCompact]);
   // #3: collapse the nav while a full artifact preview is open, restore it on close (unless the
   // user manually toggled meanwhile). The collapse is transient — it never overwrites the pref.
   // STABLE identity (no deps): depending on navCollapsed changed this callback's identity on
@@ -1594,7 +1598,8 @@ export function App() {
     startWindowDrag();
   };
 
-  if (booting || !uiReady) {
+  // This browser-local module can open while the conversation backend is starting.
+  if ((booting || !uiReady) && surface !== "minimalism") {
     return (
       <div className={"app boot-splash" + (overlay ? " tauri-overlay" : "")}>
         {/* overlay (not desktop): ?overlay=1 previews the splash's top-left in the browser
@@ -1629,8 +1634,9 @@ export function App() {
       className={
         "app" +
         (overlay ? " tauri-overlay" : "") +
-        (navCollapsed ? " nav-collapsed" : "") +
-        (navCollapsed && navPeek ? " nav-peek" : "")
+        ((navCollapsed || focusCompact) ? " nav-collapsed" : "") +
+        ((navCollapsed || focusCompact) && navPeek ? " nav-peek" : "") +
+        (focusMode ? " focus-mode" : "")
       }
     >
       {/* Dev-only fake traffic lights so ?overlay=1 previews the real desktop top-left. */}
@@ -1643,7 +1649,7 @@ export function App() {
 
       {/* UX-026: automation-start toast — quiet panel, neutral dot/drain, accent only
           on the action (rev 2); auto-dismisses with the 5s drain bar. */}
-      {runToast && (
+      {runToast && !focusMode && (
         <div
           className="fixed top-3 right-3 z-[45] w-[290px] bg-panel border border-line rounded-xl shadow-lg px-3.5 pt-3 pb-2.5"
           data-testid="automation-toast"
@@ -1681,7 +1687,7 @@ export function App() {
         </div>
       )}
       {/* When collapsed, a thin left-edge zone peeks the nav back as a floating overlay. */}
-      {navCollapsed && (
+      {navCollapsed && !focusCompact && (
         <div
           className="nav-hover-zone"
           onMouseEnter={() => setNavPeek(true)}
@@ -1691,11 +1697,11 @@ export function App() {
       {/* Explicit reveal affordance while collapsed (alongside hover-peek + ⌘B) — on every
           surface EXCEPT the session view, whose topbar carries the [sidebar][+][search] cluster
           instead (§22; no duplicate reveal buttons). */}
-      {navCollapsed && !navPeek && surface !== "session" && (
+      {(navCollapsed || focusCompact) && !navPeek && surface !== "session" && (
         <button
           className="nav-reveal-btn"
           onClick={toggleNav}
-          onMouseEnter={() => setNavPeek(true)}
+          onMouseEnter={focusCompact ? undefined : () => setNavPeek(true)}
           title={t("topbar.show_sidebar")}
           aria-label={t("topbar.show_sidebar_short")}
         >
@@ -1746,7 +1752,9 @@ export function App() {
         curriculumActive={surface === "curriculum"}
         onOpenYouTube={() => setSurface("youtube")}
         youtubeActive={surface === "youtube"}
-        onOpenMinimalism={() => { setMinimalismOpened(true); setSurface("minimalism"); }}
+        onOpenItems={() => { setItemsOpened(true); setSurface("items"); }}
+        itemsActive={surface === "items"}
+        onOpenMinimalism={() => setSurface("minimalism")}
         minimalismActive={surface === "minimalism"}
         onOpenScheduled={() => setSurface("scheduled")}
         onOpenAutomation={(id) => {
@@ -1762,10 +1770,12 @@ export function App() {
         inboxActive={surface === "inbox"}
         onPeekLeave={() => setNavPeek(false)}
       />
-      {minimalismOpened && <div className={surface === "minimalism" ? "flex flex-1 min-w-0 overflow-hidden" : "hidden"}>
-        <MinimalismView active={surface === "minimalism"} onImageSettings={() => openSettings("image-generation")} />
+      {itemsOpened && <div className={surface === "items" ? "flex flex-1 min-w-0 overflow-hidden" : "hidden"}>
+        <MinimalismView active={surface === "items"} onImageSettings={() => openSettings("image-generation")} />
       </div>}
-      {surface === "minimalism" ? null : surface === "youtube" ? (
+      {surface === "items" ? null : surface === "minimalism" ? (
+        <FocusView />
+      ) : surface === "youtube" ? (
         <YouTubeView onModelSettings={() => openSettings("models")} onTranslationSettings={() => openSettings("youtube-translation")} />
       ) : surface === "curriculum" ? (
         <CurriculumView />

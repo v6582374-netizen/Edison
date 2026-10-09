@@ -85,13 +85,13 @@ for (const width of [900, 1440]) {
         localStorage.setItem("openworker.lang", "zh"),
       );
       await page.goto("/?overlay=1");
-      await page.getByTestId("nav-minimalism").click();
-      const main = page.getByRole("main", { name: "Minimalism 物品记忆" });
+      await page.getByTestId("nav-items").click();
+      const main = page.getByRole("main", { name: "items 物品记忆" });
       await expect(
         main.getByRole("button", { name: "打开 迁入的相机" }),
       ).toBeVisible();
       await main
-        .getByRole("button", { name: "Minimalism 设置", exact: true })
+        .getByRole("button", { name: "items 设置", exact: true })
         .click();
       await expect(main.getByLabel("封面提示词", { exact: true })).toHaveValue(
         "Preserve the object. {{archivePhotoHint}}",
@@ -108,9 +108,9 @@ for (const width of [900, 1440]) {
         .fill("fixture-new-key");
       await settings.getByRole("button", { name: "保存", exact: true }).click();
       await expect(settings.getByRole("status")).toHaveText("已保存");
-      await page.getByTestId("nav-minimalism").click();
+      await page.getByTestId("nav-items").click();
       await main
-        .getByRole("button", { name: "Minimalism 设置", exact: true })
+        .getByRole("button", { name: "items 设置", exact: true })
         .click();
       await main.getByRole("button", { name: "新建集合", exact: true }).click();
       const dialog = page.getByRole("dialog");
@@ -135,7 +135,7 @@ for (const width of [900, 1440]) {
         .fill("第一段旅途记忆");
       // Switching host modules preserves an unfinished dossier.
       await page.getByTestId("nav-youtube").click();
-      await page.getByTestId("nav-minimalism").click();
+      await page.getByTestId("nav-items").click();
       await expect(dossier.getByLabel("记忆 1", { exact: true })).toHaveValue(
         "第一段旅途记忆",
       );
@@ -202,7 +202,7 @@ for (const width of [900, 1440]) {
       await page.mouse.move(width - 100, 300);
       await expect(page.locator(".app")).toHaveClass(/nav-collapsed/);
       const reveal = await page.locator(".nav-reveal-btn").boundingBox();
-      const heading = await main.getByRole("heading", { name: "Minimalism", exact: true }).boundingBox();
+      const heading = await main.getByRole("heading", { name: "items", exact: true }).boundingBox();
       expect(heading!.y).toBeGreaterThan(reveal!.y + reveal!.height);
       await page.keyboard.press("Meta+b");
       await expect(page.locator(".app")).not.toHaveClass(/nav-collapsed/);
@@ -227,7 +227,7 @@ for (const width of [900, 1440]) {
       });
       expect(restored.status()).toBe(200);
       await page.reload();
-      await page.getByTestId("nav-minimalism").click();
+      await page.getByTestId("nav-items").click();
       await expect(
         main.getByRole("button", { name: "打开 旅行手表" }),
       ).toBeVisible();
@@ -248,7 +248,7 @@ for (const width of [900, 1440]) {
           .getByRole("button", { name: "返回", exact: true })
           .click();
         await main
-          .getByRole("button", { name: "Minimalism 设置", exact: true })
+          .getByRole("button", { name: "items 设置", exact: true })
           .click();
         // Only the native folder chooser is simulated; package creation/restoration
         // crosses the real authenticated backend and filesystem.
@@ -285,9 +285,9 @@ for (const width of [900, 1440]) {
           localStorage.setItem("openworker.lang", "en"),
         );
         await page.reload();
-        await page.getByTestId("nav-minimalism").click();
+        await page.getByTestId("nav-items").click();
         const english = page.getByRole("main", {
-          name: "Minimalism object memory",
+          name: "items object memory",
         });
         await expect(
           english.getByRole("button", { name: "Add object", exact: true }),

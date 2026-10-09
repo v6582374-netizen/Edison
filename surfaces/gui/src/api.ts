@@ -2560,7 +2560,7 @@ export async function minimalismCapability<T>(capability: string, arguments_: Re
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capability, arguments: arguments_ }),
   });
-  if (!response.ok) throw new Error(`Minimalism 服务暂时不可用 (${response.status})`);
+  if (!response.ok) throw new Error(`items 服务暂时不可用 (${response.status})`);
   const data = await response.json();
   if (!data.ok) throw new Error(data.error || "操作未完成，请重试。");
   return data.result as T;

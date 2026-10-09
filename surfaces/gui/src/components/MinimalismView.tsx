@@ -171,7 +171,7 @@ export function MinimalismView({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `Minimalism-${new Date().toISOString().slice(0, 10)}.zip`;
+      anchor.download = `items-${new Date().toISOString().slice(0, 10)}.zip`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 60000);
       setNotice(mt("备份已导出。"));
@@ -208,7 +208,7 @@ export function MinimalismView({
   return (
     <main
       ref={mainRef} tabIndex={-1} {...modal.capture}
-      aria-label={mt("Minimalism 物品记忆")}
+      aria-label={mt("items 物品记忆")}
       className="minimalism-main flex-1 min-w-0 h-full flex flex-col bg-paper text-ink"
     >
       <div className="minimalism-windowbar" data-tauri-drag-region aria-hidden="true" />
@@ -237,7 +237,7 @@ export function MinimalismView({
           <span className="text-[13px]">
             {progress.state === "copying"
               ? mt("正在迁入 Minimalism 资料…")
-              : mt("正在打开 Minimalism…")}
+              : mt("正在打开 items…")}
           </span>
           {progress.total > 0 && (
             <>
@@ -270,7 +270,7 @@ export function MinimalismView({
             ) : (
               <>
                 <header className="border-b border-line px-5 sm:px-7 py-4 flex flex-wrap items-center gap-3">
-                  <h1 className="editorial-heading text-[20px] mr-2">Minimalism</h1>
+                  <h1 className="editorial-heading text-[20px] mr-2">items</h1>
                   <label className="flex items-center gap-2 flex-1 min-w-[120px] max-w-sm text-muted">
                     <Icon name="search" size={15} />
                     <input
@@ -297,7 +297,7 @@ export function MinimalismView({
                   </button>
                   <button
                     className={button}
-                    aria-label={mt("Minimalism 设置")}
+                    aria-label={mt("items 设置")}
                     aria-pressed={settings}
                     onClick={() => {
                       setSettings(!settings);
@@ -310,7 +310,7 @@ export function MinimalismView({
                 <div className="flex-1 overflow-y-auto hairline-scroll px-5 sm:px-7 pb-10">
                   {settings && (
                     <section
-                      aria-label={mt("Minimalism 设置")}
+                      aria-label={mt("items 设置")}
                       className="my-5 rounded-xl border border-line p-5 space-y-5"
                     >
                       <div className="flex justify-between items-center">

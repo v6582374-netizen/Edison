@@ -140,6 +140,8 @@ interface Props {
   curriculumActive?: boolean;
   onOpenYouTube?: () => void;
   youtubeActive?: boolean;
+  onOpenItems?: () => void;
+  itemsActive?: boolean;
   onOpenMinimalism?: () => void;
   minimalismActive?: boolean;
   onOpenScheduled: () => void;
@@ -1049,10 +1051,15 @@ export function Sidebar(props: Props) {
           onClick={props.onOpenYouTube}>
           <YouTubeIcon size={18} /><span>YouTube</span>
         </button>
+        <button data-testid="nav-items" aria-current={props.itemsActive ? "page" : undefined}
+          className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.itemsActive ? "text-ink bg-chromeHover" : "text-muted")}
+          onClick={props.onOpenItems}>
+          <Icon name="cube" size={18} /><span>items</span>
+        </button>
         <button data-testid="nav-minimalism" aria-current={props.minimalismActive ? "page" : undefined}
           className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.minimalismActive ? "text-ink bg-chromeHover" : "text-muted")}
           onClick={props.onOpenMinimalism}>
-          <Icon name="cube" size={18} /><span>Minimalism</span>
+          <Icon name="diamond" size={18} /><span>minimalism</span>
         </button>
       </div>
 

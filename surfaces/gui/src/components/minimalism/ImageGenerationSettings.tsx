@@ -43,7 +43,7 @@ export function ImageGenerationSettings() {
     <section aria-label={mt("图像生成设置")}>
       <h2 className="text-xl font-semibold text-ink">{mt("图像生成")}</h2>
       <p className="mt-2 mb-6 text-[13px] text-muted">
-        {mt("用于 Minimalism 的 AI 封面，独立于聊天模型。")}
+        {mt("用于 items 的 AI 封面，独立于聊天模型。")}
       </p>
       {error && (
         <div role="alert" className="mb-4 text-[13px] text-red-500">

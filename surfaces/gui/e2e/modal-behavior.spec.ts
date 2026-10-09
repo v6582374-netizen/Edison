@@ -23,7 +23,7 @@ async function openLibrary(page: Page, reply?: (capability: string, args: Record
     await route.fulfill({ json: { ok: true, result } });
   });
   await page.goto("/");
-  await page.getByTestId("nav-minimalism").click();
+  await page.getByTestId("nav-items").click();
 }
 
 test("new object keeps keyboard focus inside and returns it after Escape", async ({ page }) => {
@@ -159,7 +159,7 @@ test("leaving a preserved library dismisses its modal and preserves the memory d
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".modal-scrim")).toHaveCount(0);
   expect(await page.locator("#root").evaluate(el => el.hasAttribute("inert"))).toBe(false);
-  await page.getByTestId("nav-minimalism").click();
+  await page.getByTestId("nav-items").click();
   await expect(page.getByRole("textbox", { name: "记忆 1", exact: true })).toHaveValue("保留这段未保存的记忆");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -183,7 +183,7 @@ test("late cover generation is discarded after navigating away", async ({ page }
   release();
   await expect.poll(() => discarded).toContain("late-preview");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByTestId("nav-minimalism").click();
+  await page.getByTestId("nav-items").click();
   await expect(page.getByRole("button", { name: "生成封面", exact: true })).toBeEnabled();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -249,7 +249,7 @@ test("YouTube changes modal content in place and restores its external trigger",
   await expect(dialog.locator("summary")).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeFocused();
-  await page.getByTestId("nav-minimalism").evaluate((el: HTMLElement) => el.focus());
+  await page.getByTestId("nav-items").evaluate((el: HTMLElement) => el.focus());
   expect(await dialog.evaluate(el => el.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
