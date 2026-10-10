@@ -61,6 +61,7 @@ import { YouTubeView } from "./components/YouTubeView";
 import { MinimalismView } from "./components/MinimalismView";
 import { FocusView } from "./components/FocusView";
 import { CurriculumView } from "./components/CurriculumView";
+import { CourseArchiveView } from "./components/curriculum/CourseArchiveView";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
@@ -278,8 +279,25 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "items" | "minimalism" | "curriculum"
-  >(() => new URLSearchParams(location.search).get("module") === "minimalism" ? "minimalism" : "session");
+    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "items" | "minimalism" | "curriculum" | "curriculum-archive"
+  >(() => {
+    const module = new URLSearchParams(location.search).get("module");
+    return module === "minimalism" || module === "curriculum" || module === "curriculum-archive" ? module : "session";
+  });
+  const [archiveDocument, setArchiveDocument] = useState<string | null>(() => new URLSearchParams(location.search).get("document"));
+  const openClassroomDocument = (id: string | null) => { setArchiveDocument(id); setSurface("curriculum-archive"); };
+  useEffect(() => {
+    const url = new URL(location.href);
+    const existing = url.searchParams.get("module");
+    if (surface === "curriculum" || surface === "curriculum-archive") {
+      url.searchParams.set("module", surface);
+      if (surface === "curriculum-archive" && archiveDocument) url.searchParams.set("document", archiveDocument);
+      else url.searchParams.delete("document");
+    } else if (existing === "curriculum" || existing === "curriculum-archive") {
+      url.searchParams.delete("module"); url.searchParams.delete("document");
+    } else return;
+    window.history.replaceState(null, "", url);
+  }, [surface, archiveDocument]);
   const minimalismActive = surface === "minimalism";
   // Preserve a dossier draft or generation preview while visiting another host module.
   const [itemsOpened, setItemsOpened] = useState(false);
@@ -1748,6 +1766,8 @@ export function App() {
         }}
         onOpenCurriculum={() => setSurface("curriculum")}
         curriculumActive={surface === "curriculum"}
+        onOpenCourseArchive={() => openClassroomDocument(null)}
+        courseArchiveActive={surface === "curriculum-archive"}
         onOpenYouTube={() => setSurface("youtube")}
         youtubeActive={surface === "youtube"}
         onOpenItems={() => { setItemsOpened(true); setSurface("items"); }}
@@ -1776,7 +1796,9 @@ export function App() {
       ) : surface === "youtube" ? (
         <YouTubeView onModelSettings={() => openSettings("models")} onTranslationSettings={() => openSettings("youtube-translation")} />
       ) : surface === "curriculum" ? (
-        <CurriculumView />
+        <CurriculumView onOpenDocument={openClassroomDocument} />
+      ) : surface === "curriculum-archive" ? (
+        <CourseArchiveView documentId={archiveDocument} onOpenDocument={openClassroomDocument} onTimetable={() => setSurface("curriculum")} />
       ) : surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}

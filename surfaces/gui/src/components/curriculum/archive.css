@@ -1,0 +1,63 @@
+.course-archive { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 32px 40px 18px; color: var(--ink); background: var(--canvas); overflow: hidden; }
+.course-archive-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
+.course-archive-eyebrow { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.course-archive-eyebrow span { color: var(--faint); }
+.course-archive h1 { font-size: 25px; line-height: 1.4; font-weight: 600; letter-spacing: -.025em; margin: 0; }
+.course-archive-description { font-size: 13px; line-height: 1.7; color: var(--muted); margin: 8px 0 0; }
+.course-archive-actions { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+.course-archive-actions button, .course-archive-message button, .course-archive-prepare { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 11px; }
+.course-archive button:hover { background: var(--chrome-hover); }
+.course-archive :is(button, a, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.course-archive-toolbar { display: flex; gap: 16px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 16px; font-size: 12px; color: var(--muted); }
+.course-archive-toolbar label { display: flex; align-items: center; gap: 10px; }
+.course-archive-toolbar select, .course-archive-source select { color: var(--ink); background: var(--canvas); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 24px 6px 8px; max-width: 100%; }
+.course-archive-toolbar > span { margin-left: auto; }
+.course-archive-list { overflow: auto; flex: 1; min-height: 0; padding-right: 8px; }
+.course-archive-group { margin: 28px 0 36px; }
+.course-archive-group h2 { display: flex; gap: 10px; align-items: center; font-size: 16px; margin: 0 0 14px; font-weight: 600; }
+.course-archive-group h2 span { font-size: 11px; color: var(--muted); font-weight: 400; }
+.course-archive-row { display: flex; gap: 20px; align-items: flex-start; padding: 17px 0; border-bottom: 1px solid var(--line); }
+.course-archive-row time { color: var(--muted); font: 12px/24px var(--font-mono, monospace); font-variant-numeric: tabular-nums; width: 44px; flex-shrink: 0; }
+.course-archive-row-main { flex: 1; min-width: 0; }
+.course-archive-row-main strong { font-size: 13px; font-weight: 500; }
+.course-archive-row-main p { font-size: 12px; color: var(--muted); margin: 5px 0 0; }
+.course-archive-row-main small { display: block; font-size: 11px; line-height: 1.7; color: var(--muted); margin-top: 7px; }
+.course-archive-document-link { display: flex; align-items: center; text-align: left; gap: 8px; font-size: 14px; color: var(--ink); border-radius: 4px; padding: 2px 0; }
+.course-archive-document-link span { color: var(--muted); font-size: 11px; }
+.course-archive-state { flex-shrink: 0; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 11px; padding: 3px 7px; }
+.course-archive-state.is-ready { color: var(--accent); border-color: var(--accent); }
+.course-archive-message { border: 1px solid var(--line-strong); border-radius: 7px; padding: 12px; margin-bottom: 12px; font-size: 13px; }
+.course-archive-muted, .course-archive-empty p { color: var(--muted); font-size: 13px; }
+.course-archive-empty { padding: 48px 0 10px; }
+.course-archive-empty h2 { font-size: 17px; margin: 18px 0 8px; }
+.course-archive footer { border-top: 1px solid var(--line); padding-top: 12px; font-size: 11px; color: var(--muted); line-height: 1.8; }
+.course-archive-reader-scroll { overflow: auto; min-height: 0; flex: 1; }
+.course-archive-source { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); max-width: 820px; margin: 0 auto; padding: 0 0 22px; border-bottom: 1px solid var(--line); }
+.course-archive-source a { color: var(--accent); }
+.course-archive-reader { max-width: 820px; margin: 30px auto 80px; }
+.course-archive-reader .md { font-size: 16px; line-height: 1.95; }
+.course-archive-reader .md h1 { font-size: 25px; }
+.course-archive-reader .md > h1:first-child { display: none; }
+.course-archive-reader .md h2 { margin-top: 2em; font-size: 21px; }
+.course-archive-reader .md h3 { font-size: 18px; }
+.course-archive-reader .md table { display: block; max-width: 100%; overflow: auto; }
+.course-archive-reader .md pre { max-width: 100%; overflow: auto; }
+.course-archive-reader .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.curriculum-archive-information { margin: 18px 0; padding-top: 18px; border-top: 1px solid var(--line); }
+.curriculum-archive-information h3 { font-size: 12px; color: var(--muted); font-weight: 400; margin: 0 0 9px; }
+.curriculum-archive-information button { display: block; text-align: left; color: var(--accent); font-size: 13px; padding: 5px 0; }
+.curriculum-archive-information p { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 8px 0; }
+@media (max-width: 700px) { .course-archive { padding: 22px 18px 14px; } .course-archive-header { flex-direction: column; gap: 14px; margin-bottom: 20px; } .course-archive h1 { font-size: 22px; } .course-archive-row { gap: 10px; flex-wrap: wrap; } .course-archive-row-main { flex-basis: calc(100% - 64px); } .course-archive-state { margin-left: 54px; } .course-archive-toolbar { flex-wrap: wrap; gap: 10px; } .course-archive-toolbar > span { margin-left: 0; } }
+.course-archive { container-type: inline-size; container-name: course-archive; }
+.course-archive-toolbar { flex-wrap: wrap; }
+.course-archive-toolbar label, .course-archive-toolbar > span { white-space: nowrap; }
+@container course-archive (max-width: 520px) {
+  .course-archive-header { flex-direction: column; gap: 14px; }
+  .course-archive-toolbar label { flex: 1 1 100%; }
+  .course-archive-toolbar select { flex: 1; min-width: 0; }
+  .course-archive-toolbar > span { margin-left: 0; }
+  .course-archive-row { gap: 10px; flex-wrap: wrap; }
+  .course-archive-row-main { flex-basis: calc(100% - 64px); }
+  .course-archive-state { margin-left: 54px; }
+  .course-archive-document-link { flex-wrap: wrap; }
+}

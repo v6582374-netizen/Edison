@@ -2295,5 +2295,41 @@
     "planning": "Capture and prioritize",
     "arrange": "Arrange tasks",
     "close_panel": "Close panel"
+  },
+  "course_archive": {
+    "title": "Course archive",
+    "description": "Classroom notes, organized for revision.",
+    "reading_note": "Faithful classroom notes, separate explanations, and traceable uncertainties.",
+    "back": "Back to archive",
+    "timetable": "Timetable",
+    "download": "Download Markdown",
+    "retry": "Retry",
+    "refresh": "Refresh archive",
+    "error": "The archive could not be loaded or prepared. Please try again.",
+    "loading": "Loading…",
+    "course": "Course",
+    "all_courses": "All courses",
+    "progress": "{{ready}} / {{total}} classes prepared",
+    "recording": "Original recording",
+    "perspective": "Document perspective",
+    "document": "Classroom notes",
+    "empty": "No archived classes yet",
+    "empty_note": "Prepared classroom documents will appear here, grouped by course.",
+    "excluded": "This course is excluded from this archive at your request.",
+    "not_listed": "No corresponding recording is listed on the platform; whether it was recorded is unconfirmed.",
+    "not_checked": "This class recording has not been checked yet.",
+    "exam_notes": "Detailed notes",
+    "prepare": "Prepare notes",
+    "scope_note": "Historical backfill: {{from}} through {{through}} (Beijing time). Original transcripts are retained separately.",
+    "information": "Classroom documents",
+    "states": {
+      "ready": "Ready",
+      "pending": "Pending",
+      "generating": "Preparing",
+      "needs_transcript": "Needs transcription",
+      "unavailable": "Recording unavailable",
+      "failed": "Preparation incomplete"
+    },
+    "not_ended": "This class has not ended and is outside the historical archive."
   }
 }

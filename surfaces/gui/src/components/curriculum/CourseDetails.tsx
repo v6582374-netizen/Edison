@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon } from "../Icon";
 import type { Occurrence } from "./timetable";
+import { getOccurrenceDocuments } from "../../api";
+import type { RecordedClass } from "../../api";
+import "./archive.css";
 
 // Personal additions belong to the course, not one occurrence, and stay on this device.
 type Entry = { id: string; label: string; value: string };
@@ -18,11 +21,19 @@ function writeCourse(course: string, entries: Entry[]) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(all)); } catch { /* best effort */ }
 }
 
-export function CourseDetails({ course, onClose }: { course: Occurrence; onClose: () => void }) {
+export function CourseDetails({ course, onClose, onOpenDocument }: { course: Occurrence; onClose: () => void; onOpenDocument?: (id: string) => void }) {
   const { t, i18n } = useTranslation();
   const ref = useRef<HTMLDialogElement>(null);
   const [entries, setEntries] = useState<Entry[]>(() => readAll()[course.course] ?? []);
   const [fresh, setFresh] = useState<string | null>(null);
+  const [archive, setArchive] = useState<{ state: string; recordings: RecordedClass[] } | null>(null);
+  useEffect(() => {
+    let live = true;
+    getOccurrenceDocuments(course.course, course.date, course.first, course.last)
+      .then(value => { if (live) setArchive(value); })
+      .catch(() => { if (live) setArchive({ state: "error", recordings: [] }); });
+    return () => { live = false; };
+  }, [course.id, course.course, course.date, course.first, course.last]);
   useEffect(() => {
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
@@ -64,6 +75,14 @@ export function CourseDetails({ course, onClose }: { course: Occurrence; onClose
             <button type="button" aria-label={t("curriculum.remove_entry")} onClick={() => setEntries(list => list.filter(item => item.id !== entry.id))}><Icon name="x" size={14} /></button></dd>
         </div>)}
       </dl>
+      <section className="curriculum-archive-information" aria-label={t("course_archive.information")}>
+        <h3>{t("course_archive.information")}</h3>
+        {!archive && <p role="status">{t("course_archive.loading")}</p>}
+        {archive && archive.state !== "matched" && <p>{t(`course_archive.${archive.state}`)}</p>}
+        {archive?.recordings.map(record => <div key={record.id}>
+          {record.documents.length ? record.documents.map(doc => <button key={doc.id} onClick={() => { onClose(); onOpenDocument?.(doc.id); }}>{doc.title} ↗</button>) : <p>{record.title} · {t(`course_archive.states.${record.state}`, { defaultValue: record.state })}{record.detail && ` · ${record.detail}`}</p>}
+        </div>)}
+      </section>
       <button type="button" className="curriculum-add-entry" onClick={add}>+ {t("curriculum.add_entry")}</button>
       {course.course === "tourism" && <p className="curriculum-details-note">{t("curriculum.english_instruction")}</p>}
       <footer>{t("curriculum.university")} · {t("curriculum.timezone")}</footer>

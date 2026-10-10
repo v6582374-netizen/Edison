@@ -138,6 +138,8 @@ interface Props {
   onOpenPersona: (id: string) => void;
   onOpenCurriculum?: () => void;
   curriculumActive?: boolean;
+  onOpenCourseArchive?: () => void;
+  courseArchiveActive?: boolean;
   onOpenYouTube?: () => void;
   youtubeActive?: boolean;
   onOpenItems?: () => void;
@@ -1045,6 +1047,11 @@ export function Sidebar(props: Props) {
           className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.curriculumActive ? "text-ink bg-chromeHover" : "text-muted")}
           onClick={props.onOpenCurriculum}>
           <Icon name="table" size={18} /><span>Curriculum</span>
+        </button>
+        <button data-testid="nav-course-archive" aria-current={props.courseArchiveActive ? "page" : undefined}
+          className={"w-full flex items-center gap-2 pl-9 pr-2.5 py-1.5 rounded-lg text-[12px] text-left hover:bg-chromeHover " + (props.courseArchiveActive ? "text-ink bg-chromeHover" : "text-muted")}
+          onClick={props.onOpenCourseArchive}>
+          <Icon name="book" size={14} /><span>{t("course_archive.title")}</span>
         </button>
         <button data-testid="nav-youtube" aria-current={props.youtubeActive ? "page" : undefined}
           className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.youtubeActive ? "text-ink bg-chromeHover" : "text-muted")}

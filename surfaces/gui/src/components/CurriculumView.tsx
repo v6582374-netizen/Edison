@@ -11,7 +11,7 @@ const GRID_START = 8 * 60;
 const GRID_END = 21 * 60;
 const position = (time: string) => `${(minutes(time) - GRID_START) / (GRID_END - GRID_START) * 100}%`;
 
-export function CurriculumView() {
+export function CurriculumView({ onOpenDocument }: { onOpenDocument?: (id: string) => void }) {
   const { t, i18n } = useTranslation();
   const [today, setToday] = useState(shanghaiToday);
   const [selectedDate, setSelectedDate] = useState(shanghaiToday);
@@ -109,7 +109,7 @@ export function CurriculumView() {
           <p>{t("curriculum.missing_explanation")}</p>
         </div>}
       </div>
-      {selectedCourse && <CourseDetails course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
+      {selectedCourse && <CourseDetails course={selectedCourse} onClose={() => setSelectedCourse(null)} onOpenDocument={onOpenDocument} />}
       <footer className="curriculum-footer">{t("curriculum.source")}</footer>
     </main>
   );

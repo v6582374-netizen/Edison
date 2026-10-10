@@ -2259,5 +2259,41 @@
     "planning": "记录与排序",
     "arrange": "安排事项",
     "close_panel": "收起"
+  },
+  "course_archive": {
+    "title": "课程档案",
+    "description": "每一次授课，整理成可复习的课堂笔记。",
+    "reading_note": "课堂正文与补充理解分别标注，疑点保留来源定位。",
+    "back": "返回课程档案",
+    "timetable": "返回课表",
+    "download": "下载 Markdown",
+    "retry": "重试",
+    "refresh": "刷新档案",
+    "error": "课程档案暂时无法读取或整理，请稍后重试。",
+    "loading": "正在读取…",
+    "course": "课程",
+    "all_courses": "全部课程",
+    "progress": "已整理 {{ready}} / {{total}} 次课堂",
+    "recording": "查看原录播",
+    "perspective": "文档侧重点",
+    "document": "课堂笔记正文",
+    "empty": "课程档案尚未建立",
+    "empty_note": "完成课堂材料采集后，这里会按课程展示整理文档。",
+    "excluded": "本次归档已按你的要求排除此课程。",
+    "not_listed": "平台未列出对应录播，尚不能确认是否实际录制。",
+    "not_checked": "该次课程的录播尚未核对。",
+    "exam_notes": "详细课堂笔记",
+    "prepare": "整理笔记",
+    "scope_note": "本次历史归档：{{from}} 至 {{through}}（北京时间采集时点）。原始字幕独立保存。",
+    "information": "课堂文档",
+    "states": {
+      "ready": "已整理",
+      "pending": "待整理",
+      "generating": "正在整理",
+      "needs_transcript": "待补转写",
+      "unavailable": "回放不可用",
+      "failed": "整理未完成"
+    },
+    "not_ended": "该次授课尚未结束，不在本次历史档案范围内。"
   }
 }

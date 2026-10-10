@@ -151,3 +151,23 @@ _Avoid_: In-app toast, personal task reminder
 **Class period（课程节次）**:
 One numbered teaching interval in the university's daily timetable, with its own start and end time. A single course occurrence can contain several periods separated by breaks.
 _Avoid_: Entire course occurrence, weekly course
+
+**Classroom source transcript（课堂原始字幕）**:
+The preserved, unedited transcription supplied by the classroom recording platform, including its available timestamps. It is source material for a classroom document and does not establish that every spoken passage was captured.
+_Avoid_: Classroom document, corrected transcript, complete classroom record
+
+**Classroom document（课堂整理文档）**:
+A reading document organized from source material for a platform-recorded class. Its initial form is detailed classroom notes intended for exam revision; future documents for the same class may have different editorial emphases.
+_Avoid_: Raw subtitles, course definition
+
+**Recorded class（录播课次）**:
+A classroom session identified and listed by the classroom recording platform. It is the unit of classroom document archiving, distinct from a scheduled course occurrence or a single numbered class period.
+_Avoid_: Timetable occurrence, class period, proof of complete recording
+
+**Supplementary classroom transcript（补充转写）**:
+A transcription obtained from the recording audio to supplement absent or confirmed incomplete platform subtitles. Its source remains distinct from the preserved platform transcript.
+_Avoid_: Original platform subtitles, inferred missing speech
+
+**Course archive（课程档案）**:
+The Curriculum collection of classroom documents, grouped by course by default. Source transcripts are retained separately from its reader-facing documents.
+_Avoid_: Object Archive, deleted courses

@@ -2576,3 +2576,55 @@ export async function minimalismRestore(file: File): Promise<void> {
   const response = await fetch(`${httpBase()}/v1/minimalism/restore`, { method: "POST", body: file });
   if (!response.ok) throw new Error((await response.json()).error || "恢复未完成。");
 }
+
+// Curriculum's reading surface never receives source transcript or media paths.
+export interface ClassroomDocumentSummary {
+  id: string;
+  perspective: string;
+  title: string;
+  created_at: number;
+}
+export interface RecordedClass {
+  id: string; course: string; name: string; title: string; date: string;
+  first: number; last: number; teacher: string; room: string; source_url: string;
+  state: string; detail: string; warnings: string[]; documents: ClassroomDocumentSummary[];
+}
+export interface CourseArchiveSnapshot {
+  recordings: RecordedClass[];
+  courses: { key: string; name: string }[];
+  coverage: Record<string, { from: string; through: string; complete: boolean; checked_at?: string }>;
+}
+export interface ClassroomDocument extends ClassroomDocumentSummary { markdown: string; recording_id: string }
+async function curriculumRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${httpBase()}/v1/curriculum/${path}`, init);
+  if (!response.ok) throw new Error(`Course archive: ${response.status}`);
+  return response.json();
+}
+export async function getCourseArchive() {
+  const data = await curriculumRequest<CourseArchiveSnapshot>("archive");
+  if (!Array.isArray(data.recordings) || !Array.isArray(data.courses) || !data.coverage) throw new Error("Invalid course archive");
+  return data;
+}
+export async function getClassroomDocument(id: string) {
+  const data = await curriculumRequest<ClassroomDocument>(`documents/${encodeURIComponent(id)}`);
+  if (typeof data.markdown !== "string") throw new Error("Invalid classroom document");
+  return data;
+}
+export async function getOccurrenceDocuments(course: string, date: string, first: number, last: number) {
+  const data = await curriculumRequest<{ state: string; recordings: RecordedClass[] }>(`occurrence?${new URLSearchParams({ course, date, first: String(first), last: String(last) })}`);
+  if (!Array.isArray(data.recordings) || typeof data.state !== "string") throw new Error("Invalid classroom information");
+  return data;
+}
+export const prepareClassroomDocument = (id: string) => curriculumRequest<{ state: string }>(`recordings/${encodeURIComponent(id)}/prepare`, { method: "POST" });
+export async function downloadClassroomDocument(id: string, title: string) {
+  const response = await fetch(`${httpBase()}/v1/curriculum/documents/${encodeURIComponent(id)}/download`);
+  if (!response.ok) throw new Error(`Course archive: ${response.status}`);
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${title.replace(/[\\/:*?"<>|]/g, "-")}.md`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

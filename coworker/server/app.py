@@ -246,6 +246,8 @@ def create_app(manager: SessionManager) -> FastAPI:
     attach_youtube(app, manager)
     from .minimalism import attach_minimalism
     attach_minimalism(app, manager)
+    from .curriculum import attach_curriculum
+    attach_curriculum(app, manager)
 
     @app.get("/v1/health")
     def health(request: Request) -> dict[str, Any]:
