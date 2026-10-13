@@ -33,3 +33,6 @@ build/
 
 # Local research notes and captures
 .scratch/
+
+# Private local modules; excluded from Git and release archives.
+/.local/

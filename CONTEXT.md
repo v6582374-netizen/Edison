@@ -1,6 +1,8 @@
 # Edison
 
-Edison's product language covers the YouTube reading workbench, items object memory, minimalism focus, and Curriculum.
+Edison's product language covers the YouTube reading workbench and Curriculum.
+
+minimalism (the focus module) has been removed. items (object memory) is retained only in the ignored `.local/items/` archive; it has no Web entry, settings, API or release payload. See ADR 0015.
 
 ## YouTube reading language
 
@@ -89,46 +91,6 @@ _Avoid_: Summary, reading manuscript
 **Manuscript composition**:
 The limited editorial transformation of a complete translation into a reading document: removing spoken filler and adding hierarchical headings while retaining meaning and argument order.
 _Avoid_: Summarization, free rewriting
-
-## Object memory language
-
-**items**:
-The named module within Edison for the Object Memory System. The original standalone Minimalism application is its migration source.
-_Avoid_: Skills manager, a second independently maintained product
-
-**Object Collection（物品集合）**:
-A named grouping of belongings. Removing a collection leaves its objects unfiled rather than deleting them.
-_Avoid_: Reading queue, destructive folder
-
-**Archived Object（归档物品）**:
-A preserved belonging outside the active gallery, held in the protected Archive collection. Unarchiving returns it to Unfiled.
-_Avoid_: Deleted object, trash
-
-**Object Trash（物品回收站）**:
-The recoverable set of deleted object records, distinct from Archive. Permanent deletion removes a record and its owned media from Edison's current object library.
-_Avoid_: Archive, automatic retention policy
-
-**Object Memory System（物品记忆系统）**:
-A personal archive of belongings, preserving objects, collections, documentary photos, memory text, archived belongings and AI-generated covers. It is a distinct domain within Edison, separate from Skills management.
-_Avoid_: Inventory accounting, Skill library
-
-**Archive Photo（档案照片）**:
-A user-provided photograph documenting the real object, distinct from an AI-generated representation.
-_Avoid_: AI cover, generated evidence
-
-**AI Memory Cover（AI 记忆封面）**:
-A generated visual representation of an object used as its cover, distinct from documentary photographs of the real object.
-_Avoid_: Archive photo, factual photographic evidence
-
-## Focus language
-
-**minimalism**:
-The module that presents one current task, advancing directly to the next when it is completed. Capture and priority ordering are available on demand.
-_Avoid_: Object memory, task dashboard
-
-**Current task（当前事项）**:
-The first task in the ordered queue, receiving the person's attention now. New captures append to the queue without replacing it.
-_Avoid_: Parallel task, focus mode toggle
 
 ## Curriculum language
 

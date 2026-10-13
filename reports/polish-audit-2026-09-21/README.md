@@ -1,5 +1,7 @@
 # Edison 精修审查 · 2026-09-21
 
+2026-10-13：items 已转为本地归档。以下是历史审查；物品模块源码与截图保留在本机 `.local/items/`，不再作为线上待办。
+
 产品应该给人安静、直接、可掌控的感觉。当前配色、留白和编辑式标题已经有自己的性格；下一轮最有价值的工作是统一交互边界与反馈，再补少量状态过渡。
 
 本轮为 `find-animation-opportunities` + `apple-design` 只读审查，未修改产品源码。以下为待实施方案，不代表已修复。
@@ -10,17 +12,17 @@
 
 **已在 Chromium 与 WebKit 复现：**打开 Minimalism → 添加物品 → 将焦点移到“保存” → Tab，焦点离开弹窗落到 body；此时按 Esc，弹窗仍在。
 
-位置：[MinimalismView.tsx:747](../../surfaces/gui/src/components/MinimalismView.tsx#L747)。照片/封面预览的另一套弹窗位于 [ObjectDossier.tsx:548](../../surfaces/gui/src/components/minimalism/ObjectDossier.tsx#L548)，本轮仅静态核对该处，不能将它也视为已经复现。
+位置：`MinimalismView.tsx:747`。照片/封面预览的另一套弹窗位于 `ObjectDossier.tsx:548`，本轮仅静态核对该处，不能将它也视为已经复现。
 
 验收标准：Tab 与 Shift+Tab 在可用控件间闭环；Esc 始终关闭最上层弹窗；关闭后回到原触发器；背景不能得到焦点。YouTube 的 [Dialog.tsx:25](../../surfaces/gui/src/components/youtube/Dialog.tsx#L25) 已有焦点保存与循环处理，优先复用、补齐同一套行为，避免再造弹窗管理层。动画不得延迟焦点管理。
 
 ### 2. 小缩略图不要照搬大图的占位排版
 
-**已在截图确认：**集合缩略图里的“尚无封面”断成“尚无封 / 面”。[ObjectImage.tsx:57](../../surfaces/gui/src/components/minimalism/ObjectImage.tsx#L57) 对所有图片尺寸都用相同的左右内边距；集合调用点为 [MinimalismView.tsx:520](../../surfaces/gui/src/components/MinimalismView.tsx#L520)。
+**已在截图确认：**集合缩略图里的“尚无封面”断成“尚无封 / 面”。`ObjectImage.tsx:57` 对所有图片尺寸都用相同的左右内边距；集合调用点为 `MinimalismView.tsx:520`。
 
 建议小缩略图移除这句重复提示，以居中的 16px 图片图标表达空封面，集合名称继续放在下方；大图保留文字。这样既消除断行，也减少视觉噪声。非交互占位无需动效。
 
-![900px 画廊；空封面文字断行](minimalism-900.png)
+（物品画廊截图已归入本地 items 档案。）
 
 ## 1. 保留的动效机会
 
@@ -30,9 +32,9 @@
 
 | # | 位置 | 现在 | 目的 | 频率 | 建议动效 | 功能与预算门槛 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | [Dialog.tsx:61](../../surfaces/gui/src/components/youtube/Dialog.tsx#L61)、[MinimalismView.tsx:747](../../surfaces/gui/src/components/MinimalismView.tsx#L747) | 指针打开时表面直接出现；条件卸载直接消失 | Preventing a jarring change，避免突变 | 偶尔；订阅设置、新建表单 | 表面 `scale(.98) → scale(1)`、`opacity:0 → 1`，中心原点，200ms `cubic-bezier(.23,1,.32,1)`；遮罩仅 opacity 同步。关闭沿原路径反向，200ms `cubic-bezier(.68,0,.77,0)`。减少动态时仅 opacity，100ms 同方向曲线 | 只动浮层，不移动背景或正文；不等待动画才响应。200ms 在弹窗预算内 |
-| 2 | [minimalism/types.ts:78](../../surfaces/gui/src/components/minimalism/types.ts#L78) | “添加物品”按下时，背景、透明度、位置均不变；共享按钮样式未提供按下态 | Feedback，即时反馈 | 每天数十次；限定添加、保存等明确操作按钮 | pointer-down 即开始 `scale(1) → scale(.98)`，100ms `cubic-bezier(.23,1,.32,1)`；释放、取消回到 1，用同样100ms曲线。减少动态时固定尺寸，改 `opacity:1 → .88 → 1`，100ms 同曲线 | 反馈与业务提交分离，提交仍在 click；只动视觉内容，点击区域固定。100ms符合预算；禁用状态不响应 |
-| 3 | [ObjectDossier.tsx:157](../../surfaces/gui/src/components/minimalism/ObjectDossier.tsx#L157)、[MinimalismView.tsx:561](../../surfaces/gui/src/components/MinimalismView.tsx#L561) | “物品操作 / 管理集合”菜单直接出现，视觉上像另一张卡片 | Spatial consistency，空间连续性 | 偶尔；管理操作 | 从右上触发器展开：`transform-origin: top right`，`scale(.97) → 1`、`opacity:0 → 1`，160ms `cubic-bezier(.23,1,.32,1)`；关闭沿原路径，160ms `cubic-bezier(.68,0,.77,0)`。减少动态仅 opacity 100ms 对应曲线 | 小表面且不挤动周围布局；菜单出现即能操作。160ms在菜单预算内 |
+| 1 | [Dialog.tsx:61](../../surfaces/gui/src/components/youtube/Dialog.tsx#L61)、`MinimalismView.tsx:747` | 指针打开时表面直接出现；条件卸载直接消失 | Preventing a jarring change，避免突变 | 偶尔；订阅设置、新建表单 | 表面 `scale(.98) → scale(1)`、`opacity:0 → 1`，中心原点，200ms `cubic-bezier(.23,1,.32,1)`；遮罩仅 opacity 同步。关闭沿原路径反向，200ms `cubic-bezier(.68,0,.77,0)`。减少动态时仅 opacity，100ms 同方向曲线 | 只动浮层，不移动背景或正文；不等待动画才响应。200ms 在弹窗预算内 |
+| 2 | `minimalism/types.ts:78` | “添加物品”按下时，背景、透明度、位置均不变；共享按钮样式未提供按下态 | Feedback，即时反馈 | 每天数十次；限定添加、保存等明确操作按钮 | pointer-down 即开始 `scale(1) → scale(.98)`，100ms `cubic-bezier(.23,1,.32,1)`；释放、取消回到 1，用同样100ms曲线。减少动态时固定尺寸，改 `opacity:1 → .88 → 1`，100ms 同曲线 | 反馈与业务提交分离，提交仍在 click；只动视觉内容，点击区域固定。100ms符合预算；禁用状态不响应 |
+| 3 | `ObjectDossier.tsx:157`、`MinimalismView.tsx:561` | “物品操作 / 管理集合”菜单直接出现，视觉上像另一张卡片 | Spatial consistency，空间连续性 | 偶尔；管理操作 | 从右上触发器展开：`transform-origin: top right`，`scale(.97) → 1`、`opacity:0 → 1`，160ms `cubic-bezier(.23,1,.32,1)`；关闭沿原路径，160ms `cubic-bezier(.68,0,.77,0)`。减少动态仅 opacity 100ms 对应曲线 | 小表面且不挤动周围布局；菜单出现即能操作。160ms在菜单预算内 |
 
 所有行只动画 `transform` 与 `opacity`。不新增 hover 动效；若后续调整 hover 外观，限定 `@media (hover: hover) and (pointer: fine)`。CSS transition 需从当前显示值重新定向，快速按下/释放与关闭/重开不能闪回初始状态。退出呈现与逻辑关闭分离，不可用延迟提交或锁定输入来换流畅；键盘 Esc 无动画延迟。原生 details 若无法可靠实现可打断的退出，应复用已有浮层开闭行为，不能叠加定时器补丁。
 
@@ -44,9 +46,9 @@
 
 - [SearchModal.tsx:18](../../surfaces/gui/src/components/SearchModal.tsx#L18)：搜索、方向键选择、快捷键跳转。**频率门槛拒绝：键盘驱动的高频操作，保持即时。**
 - [App.tsx:1765](../../surfaces/gui/src/App.tsx#L1765) 及 YouTube 的阅读布局切换：整页滑入、页面交叉淡出。**频率门槛拒绝：核心导航不应让人等待。**物品档案也不做整页共享元素飞行动画。
-- [MinimalismView.tsx:650](../../surfaces/gui/src/components/MinimalismView.tsx#L650)：画廊卡片逐个入场。**功能门槛拒绝：搜索、筛选与返回后的可读内容不应轮流出现。**
-- [ObjectDossier.tsx:420](../../surfaces/gui/src/components/minimalism/ObjectDossier.tsx#L420)：添加记忆时周围正文弹跳、折叠区推挤。**功能门槛拒绝：编辑文本时稳定的位置比装饰运动重要。**
-- [MinimalismView.tsx:658](../../surfaces/gui/src/components/MinimalismView.tsx#L658)：拖入集合后的惯性甩动。**目的门槛拒绝：当前是原生拖放分类，并没有可自由放置、需要投射动量的物理对象。**不为动画另造手势系统。
+- `MinimalismView.tsx:650`：画廊卡片逐个入场。**功能门槛拒绝：搜索、筛选与返回后的可读内容不应轮流出现。**
+- `ObjectDossier.tsx:420`：添加记忆时周围正文弹跳、折叠区推挤。**功能门槛拒绝：编辑文本时稳定的位置比装饰运动重要。**
+- `MinimalismView.tsx:658`：拖入集合后的惯性甩动。**目的门槛拒绝：当前是原生拖放分类，并没有可自由放置、需要投射动量的物理对象。**不为动画另造手势系统。
 
 ## 3. 判断与交接
 

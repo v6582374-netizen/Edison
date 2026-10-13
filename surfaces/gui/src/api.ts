@@ -2554,28 +2554,6 @@ export async function youtubeCapability<T>(capability: string, arguments_: Recor
   return data.result as T;
 }
 
-/** Minimalism shares the desktop's authenticated transport. */
-export async function minimalismCapability<T>(capability: string, arguments_: Record<string, unknown> = {}): Promise<T> {
-  const response = await fetch(`${httpBase()}/v1/minimalism/capability`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ capability, arguments: arguments_ }),
-  });
-  if (!response.ok) throw new Error(`items 服务暂时不可用 (${response.status})`);
-  const data = await response.json();
-  if (!data.ok) throw new Error(data.error || "操作未完成，请重试。");
-  return data.result as T;
-}
-
-export async function minimalismBackup(): Promise<Blob> {
-  const response = await fetch(`${httpBase()}/v1/minimalism/backup`);
-  if (!response.ok) throw new Error("备份未完成，请重试。");
-  return response.blob();
-}
-
-export async function minimalismRestore(file: File): Promise<void> {
-  const response = await fetch(`${httpBase()}/v1/minimalism/restore`, { method: "POST", body: file });
-  if (!response.ok) throw new Error((await response.json()).error || "恢复未完成。");
-}
 
 // Curriculum's reading surface never receives source transcript or media paths.
 export interface ClassroomDocumentSummary {

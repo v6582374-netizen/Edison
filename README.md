@@ -1,11 +1,11 @@
 # Edison
 
-Edison 将 Openworker 的 macOS 客户端、YouTube 阅读资料库与 Minimalism 物品记忆系统整合在同一工作区。
+Edison 将 YouTube 阅读资料库与课程周览整合在同一工作区。
+
+minimalism 专注模块已移除；items 物品模块仅保留在本机忽略目录 `.local/items/`，不进入远程仓库或 Web 部署。
 
 - 侧边栏 **YouTube**：订阅导入、字幕获取、中文 Markdown、阅读队列、版本与来源追溯。
-- 侧边栏 **Minimalism**：物品画廊、集合、档案照片、多段记忆、元数据、归档、备份与 AI 封面。首次进入自动复制原 Minimalism 资料，原件保留，之后独立管理。
 - **设置 → 模型**：聊天与 YouTube 共用模型配置；YouTube 不需要第二份模型 API Key。
-- **设置 → 图像生成**：独立配置 Minimalism 生图服务。仅迁入原封面提示词，旧端点、模型与 API Key 不迁入。
 - YouTube 登录由系统钥匙串保存，进入订阅页与后台定时同步账号订阅；旧 Vault 连接可一次迁移。正式构建的 Google 登录配置见 [连接说明](docs/architecture/youtube-connection.md)。模型凭据遵循 Openworker 原有存储机制。
 
 ## 下载
