@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { YouTubeCapabilityError, youtubeCapability } from "../api";
 
 export type ContentSessionStatus = {
-  state: "disconnected" | "unverified" | "available" | "needs_user" | "needs_maintenance" | "interrupted";
+  state: "disconnected" | "unverified" | "available" | "needs_user" | "needs_maintenance" | "interrupted" | "waiting_resources";
+  browser_pending?: boolean;
   browser_running: boolean; snapshot_present: boolean; reason?: string;
   account_consistency?: string; last_success_at?: number; idle_closes_at?: number;
 };
@@ -72,6 +73,19 @@ export function YouTubeSessionSettings() {
     return () => { active = false; clearTimeout(timer); };
   }, [status?.browser_running, viewPaused, changingBrowser, viewAttempt]);
 
+  useEffect(() => {
+    if (status?.state !== "waiting_resources") return;
+    const timer = setInterval(() => {
+      const observed = revision.current;
+      void youtubeCapability<ContentSessionStatus>("content_session.status").then(next => {
+        if (observed !== revision.current) return;
+        setStatus(next);
+        if (next.state !== "waiting_resources") {setError(""); setViewError("");}
+      }).catch(() => {});
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [status?.state]);
+
   const run = async (operation: string) => {
     setBusy(operation); setError("");
     if (["open", "confirm", "close"].includes(operation)) { revision.current++; setScreen(null); }
@@ -81,7 +95,11 @@ export function YouTubeSessionSettings() {
     } catch (failure) {
       failed(failure, operation === "open", operation === "open" ? "open" : "status");
       if (failure instanceof YouTubeCapabilityError) {
-        try { setStatus(await youtubeCapability<ContentSessionStatus>("content_session.status")); }
+        try {
+          const next = await youtubeCapability<ContentSessionStatus>("content_session.status");
+          setStatus(next);
+          if (next.state === "waiting_resources") {setViewError(""); setError("");}
+        }
         catch (transport) { failed(transport, false, "status"); }
       }
     } finally { setBusy(""); }
@@ -98,13 +116,13 @@ export function YouTubeSessionSettings() {
     <h3 className="text-[15px] font-medium">YouTube 内容会话</h3>
     <p className="text-[13px] text-muted">内容登录用于获取字幕；Google 官方授权用于读取订阅，两项需要分别完成。关闭此页面不会断开后台连接。</p>
     <p className="text-[13px]">打开登录画面只会启动服务器浏览器，不会替你登录。</p>
-    <p role="status">{networkError ? "暂时无法确认字幕能力" : ({disconnected: "内容会话已断开", available: "字幕能力已验证", unverified: "字幕能力尚未验证", needs_user: "需要完成 YouTube 登录", needs_maintenance: "内容连接需要维护", interrupted: "字幕能力中断"})[status?.state || "unverified"]}</p>
+    <p role="status">{networkError ? "暂时无法确认字幕能力" : ({disconnected: "内容会话已断开", waiting_resources: "等待服务器资源", available: "字幕能力已验证", unverified: "字幕能力尚未验证", needs_user: "需要完成 YouTube 登录", needs_maintenance: "内容连接需要维护", interrupted: "字幕能力中断"})[status?.state || "unverified"]}</p>
     {(networkError || viewError || error || status?.reason) && <p role="alert" className="text-[13px] text-red-600">{networkError || viewError || error || status?.reason}</p>}
     <p className="text-[12px] text-muted">{status?.account_consistency === "user_confirmed_not_verified" ? "账号一致性：用户确认，系统未自动核验。" : "账号一致性尚未确认。"}</p>
     <div className="flex flex-wrap gap-2">
       {viewPaused ? <button className={button} disabled={!!busy} onClick={() => void run(retryAction)}>{busy ? "正在重新连接…" : "重试连接"}</button>
         : <button className={button} disabled={!!busy} onClick={() => void run("open")}>{busy === "open" ? "正在打开登录画面…" : status?.browser_running ? "刷新登录画面" : "打开登录画面"}</button>}
-      {status?.browser_running && <button className={button} disabled={!!busy || viewPaused} onClick={() => void run("close")}>{busy === "close" ? "正在关闭…" : "关闭服务器浏览器"}</button>}
+      {(status?.browser_running || status?.browser_pending) && <button className={button} disabled={!!busy || (viewPaused && !status?.browser_pending)} onClick={() => void run("close")}>{busy === "close" ? "正在关闭…" : "关闭服务器浏览器"}</button>}
     </div>
     {busy === "open" && <p aria-live="polite" className="text-[13px]">正在连接服务器并打开浏览器，请稍候。登录画面会显示在这里，不会打开你电脑上的新窗口。</p>}
     {status?.browser_running && !viewPaused && <div className="space-y-2">

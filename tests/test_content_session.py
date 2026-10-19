@@ -430,3 +430,30 @@ def test_disconnect_stops_late_shorts_fallback_request(tmp_path, monkeypatch):
             pending.result()
     assert len(requests)==1
     session.shutdown()
+
+
+def test_disconnect_cancels_resource_deferred_browser_until_new_explicit_open(tmp_path):
+    from youtube_strataread.workbench.resource_governor import ResourceGovernor, ResourceObservation
+
+    sample = [ResourceObservation(1024**3, 0, 0, True)]
+    browser = Browser()
+    session = ContentSession(tmp_path / 'session', browser=browser,
+        resources=ResourceGovernor(observe=lambda: sample[0]))
+    with pytest.raises(ContentSessionError):
+        session.open()
+    assert session.status()['browser_pending']
+    session.clear()
+    sample[0] = ResourceObservation(2*1024**3, 0, 0, True)
+    session.tick()
+    assert not browser.running
+    assert not session.status()['browser_pending']
+    assert session.status()['state'] == 'disconnected'
+    # A new explicit request can itself wait for resources and resume normally.
+    sample[0] = ResourceObservation(1024**3, 0, 0, True)
+    with pytest.raises(ContentSessionError):
+        session.open()
+    assert session.status()['state'] == 'waiting_resources'
+    sample[0] = ResourceObservation(2*1024**3, 0, 0, True)
+    session.tick()
+    assert browser.running
+    session.shutdown()

@@ -36,6 +36,10 @@ class ServerBrowser:
         self.process = None
 
     @property
+    def resource_released(self):
+        return self.process is not None and self.process.poll() == 75
+
+    @property
     def alive(self):
         return self.process is not None and self.process.poll() is None
 
@@ -50,6 +54,8 @@ class ServerBrowser:
             )
         if self.process and self.process.poll() is None:
             return
+        from youtube_strataread.workbench.resource_governor import ResourceGovernor
+        ResourceGovernor().require_browser_start()
         profile.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.process = subprocess.Popen(
             [
@@ -91,6 +97,8 @@ class ServerBrowser:
                 kind,
                 "请在服务器 YouTube 页面完成登录及站点交接。"
                 if kind == "user"
+                else "服务器资源不足，已释放登录画面；等待资源恢复。"
+                if kind == "resource"
                 else "浏览器操作参数无效，请刷新画面后重试。"
                 if kind == "unknown"
                 else "服务器浏览器操作失败，请检查浏览器安装、沙箱与存储权限。",
@@ -99,6 +107,8 @@ class ServerBrowser:
 
     def command(self, command, arguments):
         if not self.process or self.process.poll() is not None:
+            if self.resource_released:
+                raise ContentSessionError("resource", "服务器资源不足，已释放登录画面；等待资源恢复。")
             raise ContentSessionError("maintenance", "服务器浏览器已退出，请重新打开。")
         try:
             self.process.stdin.write(
@@ -111,8 +121,13 @@ class ServerBrowser:
                 self.close()
             raise
         except (BrokenPipeError, OSError):
+            released = self.resource_released
             self.close()
-            raise ContentSessionError("maintenance", "服务器浏览器连接已结束。") from None
+            raise ContentSessionError(
+                "resource" if released else "maintenance",
+                "服务器资源不足，已释放登录画面；等待资源恢复。" if released
+                else "服务器浏览器连接已结束。",
+            ) from None
 
     def snapshot(self):
         try:
@@ -267,6 +282,16 @@ def _serve(profile, start_url, runtime):
     display = None
     desktop = None
     quit_requested = False
+    resource_releasing = False
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceGovernor
+    kernel = LinuxResources.from_environment()
+    resources = ResourceGovernor(observe=lambda: kernel.observe(browser_process=True))
+
+    def check_resources():
+        nonlocal resource_releasing
+        if resources.status()["release_browser"]:
+            resource_releasing = True
+            raise ContentSessionError("resource", "服务器浏览器已因资源压力关闭。")
 
     def stop_desktop():
         # This process owns no durable state. Revoke its ingress immediately,
@@ -326,6 +351,7 @@ def _serve(profile, start_url, runtime):
         )
         deadline = time.monotonic() + 10
         while not socket_path.exists():
+            check_resources()
             if (
                 browser.poll() is not None
                 or display.poll() is not None
@@ -335,17 +361,25 @@ def _serve(profile, start_url, runtime):
             time.sleep(0.05)
         desktop = Desktop(socket_path)
         _verify_private_display(display, socket_path)
-        wait_for_native_window(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
+        def browser_alive():
+            check_resources()
+            return browser.poll() is None
+        wait_for_native_window(os.environ["DISPLAY"], alive=browser_alive)
         _verify_private_display(display, socket_path)
         reply()
+        next_listener_check = 0.0
         while True:
-            # Readiness is not a lifetime guarantee: inspect idle desktops too.
-            _verify_private_display(display, socket_path)
-            if not select.select([sys.stdin], [], [], 1)[0]:
+            check_resources()
+            # Budget samples are cheap; /proc listener scans retain their 1s cadence.
+            if time.monotonic() >= next_listener_check:
+                _verify_private_display(display, socket_path)
+                next_listener_check = time.monotonic() + 1
+            if not select.select([sys.stdin], [], [], .1)[0]:
                 continue
             line = sys.stdin.readline()
             if not line:
                 break
+            check_resources()
             try:
                 # A listener may appear while select waited for human input.
                 _verify_private_display(display, socket_path)
@@ -395,7 +429,11 @@ def _serve(profile, start_url, runtime):
             stop_desktop()
         finally:
             try:
-                stop_browser()
+                try:
+                    stop_browser()
+                except Exception:
+                    if not resource_releasing:
+                        raise
             finally:
                 if browser.poll() is None:
                     browser.terminate()
@@ -478,7 +516,12 @@ if __name__ == "__main__":
         os.umask(0o077)
         if sys.platform != "linux" or sys.argv[3] == "headless":
             raise RuntimeError("native human handoff requires a Linux display")
+        from youtube_strataread.workbench.resource_governor import LinuxResources
+        LinuxResources.from_environment().enter_browser_group()
         with _display(Path(sys.argv[1]).parent) as runtime:
             _serve(Path(sys.argv[1]), sys.argv[2], runtime)
+    except ContentSessionError as error:
+        print(json.dumps({"ok": False, "kind": error.kind}), flush=True)
+        sys.exit(75 if error.kind == "resource" else 1)
     except Exception:
         print(json.dumps({"ok": False, "kind": "maintenance"}), flush=True)

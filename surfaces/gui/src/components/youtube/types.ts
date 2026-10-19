@@ -55,6 +55,7 @@ export type Activity = {
   expired?: number;
   awaiting_timing?: number;
   awaiting_completion?: number;
+  resources?: { captions_waiting: boolean; reason?: string } | null;
   youtube_requests?: { cooldown_until: number; strikes: number; reason?: string };
   current?: CurrentPreparation[];
   events?: ProgressEvent[];

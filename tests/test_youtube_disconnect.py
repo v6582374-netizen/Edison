@@ -10,6 +10,12 @@ from coworker.server import SessionManager, create_app
 from youtube_strataread.workbench.connection import GoogleOAuthGateway, OAuthCredentials
 
 
+@pytest.fixture(autouse=True)
+def healthy_server_resources(monkeypatch):
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceObservation
+    monkeypatch.setattr(LinuxResources, "observe", lambda self: ResourceObservation(2*1024**3, 0, 0, True))
+
+
 @pytest.fixture
 def web(tmp_path, monkeypatch):
     monkeypatch.setenv('YOUTUBE_WORKBENCH_WORKSPACE', str(tmp_path / 'library'))

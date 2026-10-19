@@ -129,7 +129,9 @@ class YouTubeWorkbench:
         if self.managed_content and (not content_root.is_absolute()
                 or content_root.resolve().is_relative_to(root.resolve())):
             raise ConnectionError("内容会话目录必须是资料库之外的稳定绝对路径。")
-        self.content_session = ContentSession(content_root)
+        from youtube_strataread.workbench.resource_governor import ResourceGovernor
+        self.resources = ResourceGovernor() if self.managed_content else None
+        self.content_session = ContentSession(content_root, resources=self.resources)
         if self.managed_content:
             self.connection.resume_disconnection(clear_content=self.content_session.clear)
         self.workspace.recover_interrupted_preparations()
@@ -143,6 +145,7 @@ class YouTubeWorkbench:
             workspace=self.workspace,
             captions=YtDlpCaptions(content_session=self.content_session if self.managed_content else None),
             manuscripts=HostManuscripts(manager, self.workspace),
+            resources=self.resources,
         )
         if self.managed_content:
             self.preparation.shorts.content_session = self.content_session
@@ -503,6 +506,7 @@ class YouTubeWorkbench:
         if response.get("ok") and capability == "activity.snapshot":
             response["result"].update(
                 {
+                    "resources": self.resources.status() if self.resources else None,
                     "runtime": {
                         "heartbeat_at": self.heartbeat_at,
                         "worker_alive": self.thread.is_alive(),
