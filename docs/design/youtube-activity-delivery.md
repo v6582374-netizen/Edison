@@ -8,7 +8,7 @@
 
 直接运行从 Vegapunk 抽取的 LaunchHero、RuntimeDesk 事件呈现以及呼吸、光环、事件入场和扁平分区样式。宿主负责 YouTube 数据、阶段与后台心跳、取消/恢复契约、分页及原有操作。没有引入科研运行时或第二个服务；旧弹出面板与专属样式已删除。
 
-固定版本、两层许可证、原始片段和适配补丁见 `../upstream/vegapunk-discovery/`。许可声明已验证进入 `surfaces/gui/dist/licenses/vegapunk-discovery.txt`，该目录是 Tauri 的前端资源输入。本地 Vegapunk clone 未改动，也不是 Edison 运行依赖。
+固定版本、两层许可证、原始片段和适配补丁见 `../upstream/vegapunk-discovery/`。许可声明已验证进入 `surfaces/gui/dist/licenses/vegapunk-discovery.txt`，该目录是 Tauri 的前端资源输入。Vegapunk 子模块及本地克隆现已移除；已迁入的组件与来源、许可材料独立保留，运行和构建均不依赖上游仓库。
 
 ## 验证结果
 
