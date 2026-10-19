@@ -121,8 +121,13 @@ class ServerBrowser:
                 self.close()
             raise
         except (BrokenPipeError, OSError):
+            released = self.resource_released
             self.close()
-            raise ContentSessionError("maintenance", "服务器浏览器连接已结束。") from None
+            raise ContentSessionError(
+                "resource" if released else "maintenance",
+                "服务器资源不足，已释放登录画面；等待资源恢复。" if released
+                else "服务器浏览器连接已结束。",
+            ) from None
 
     def snapshot(self):
         try:
