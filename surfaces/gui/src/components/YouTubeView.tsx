@@ -9,6 +9,7 @@ import { ProgressPage } from "./youtube/ProgressPage";
 import { useModalInteraction, type ModalInput } from "./ModalSurface";
 import { AddVideo, type VideoRequest } from "./youtube/AddVideo";
 import { RequestedVideo, RequestedDocument } from "./youtube/RequestedVideo";
+import { YouTubeSessionSettings } from "./YouTubeSessionSettings";
 import { OfficialAuthorization } from "./youtube/OfficialAuthorization";
 import { Dialog } from "./youtube/Dialog";
 import { DocumentViews, ChannelAvatar } from "./youtube/DocumentViews";
@@ -878,6 +879,7 @@ export function YouTubeView({
         </>)}
         {panel === "connection" && (<>
           {connection && <OfficialAuthorization connection={connection} onChange={value => { setConnection(value); void preferences(); }} />}
+          <YouTubeSessionSettings />
           {panelLoading ? (
             <p>{yt("正在检查连接状态…")}</p>
           ) : connectionError || !connection ? (
