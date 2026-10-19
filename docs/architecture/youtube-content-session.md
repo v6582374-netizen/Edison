@@ -82,8 +82,10 @@ preserves the old snapshot. Cleanup terminates and, if needed, kills the whole
 process group even if the driver has already exited.
 The inherited ownership descriptor prevents a new owner from racing the live
 browser driver during normal host exit. Chromium's native profile lock also
-rejects an overlapping browser. Whole-cgroup resource enforcement and abnormal
-host/OS lifecycle admission remain separate runtime requirements.
+rejects an overlapping browser. The shared [resource admission](youtube-resource-admission.md)
+now verifies and enrolls the entire display/browser tree in its dedicated Linux
+cgroup. Target-machine coexistence and abnormal host/OS admission remain separate
+evidence requirements.
 
 ## Isolated setup and connection procedure
 
@@ -108,7 +110,10 @@ For an isolated test deployment using a fixed non-root service identity:
    The directory selects the managed path for **both** captions and Shorts;
    there is no fallback to `YOUTUBE_COOKIES_FILE` in that selected path.
    Authentication snapshots must stay out of asset backups and exports.
-3. In the isolated environment only, set `EDISON_CONTENT_BROWSER_ENABLED=1`.
+3. Provision the dedicated cgroup and `EDISON_CONTENT_CGROUP_DIR` according to
+   [resource admission](youtube-resource-admission.md), including the exact
+   768 MiB memory, 576 MiB high and zero swap limits. In the isolated environment
+   only, set `EDISON_CONTENT_BROWSER_ENABLED=1`.
    Restart the host normally. This flag enables the adapter, not resource or
    sustained-availability acceptance. If the state-directory setting is absent,
    the host retains its pre-cutover acquisition behavior; the new UI cannot start
