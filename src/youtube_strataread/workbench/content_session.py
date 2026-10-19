@@ -207,7 +207,13 @@ class ContentSession:
                 raise ContentSessionError("user", "请先打开服务器浏览器并完成 YouTube 登录。")
             self._last_input = self.now()
             try:
-                cookies = self._browser.snapshot()
+                try:
+                    cookies = self._browser.snapshot()
+                finally:
+                    # Native snapshot reads only after orderly profile flush. All
+                    # adapters end handoff here, including failed extraction.
+                    self._browser.close()
+                    self._running = False
                 self._atomic(self.root / "current.cookies", cookies)
                 self._state.update(
                     generation=self._state.get("generation", 0) + 1,
