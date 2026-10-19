@@ -64,18 +64,8 @@ class YtDlpCaptions:
     def acquire(self, url: str, *, before_subtitles: Callable[[dict[str, Any]], None] | None = None) -> SubtitleResult:
         if self.content_session is not None:
             video_id = parse_qs(urlsplit(url).query).get('v', [''])[0]
-            from youtube_strataread.workbench.content_session import content_failure
-            lease = None
-            try:
-                with self.content_session.snapshot() as lease:
-                    result = self.fetch_snapshot(url, lease.path, before_subtitles=before_subtitles)
-                    self.content_session.accept(lease, result, video_id)
-                    return result
-            except Exception as error:
-                if lease is not None:
-                    self.content_session.assert_current(lease)
-                self.content_session.record_failure(content_failure(error))
-                raise
+            return self.content_session.acquire(video_id, fetch=lambda canonical_url, path:
+                self.fetch_snapshot(canonical_url, path, before_subtitles=before_subtitles))
         cookies = youtube_cookie_file()
         try:
             return download_subtitles(url, cookiefile=cookies, request_policy=self.requests,

@@ -60,6 +60,8 @@ export function YouTubeSessionSettings() {
       {screen && <div role="application" aria-label="服务器 Google 浏览器" tabIndex={0}
         className="outline-none focus:ring-2 focus:ring-accent"
         onKeyDown={event => {
+          // Let the browser produce its native paste event; onPaste forwards it.
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v") return;
           event.preventDefault();
           if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) input("text", {text: event.key});
           else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") input("key", {key: "ControlOrMeta+A"});

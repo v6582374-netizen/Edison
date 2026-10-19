@@ -47,6 +47,8 @@ class Browser:
             raise ContentSessionError('user', '请在 YouTube 页面完成登录及站点交接。')
         return '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session\n'
     def command(self, command, args):
+        if command == 'text':
+            (root / 'browser-input').write_text(args['text'])
         if command == 'click':
             (root / 'youtube-login').touch()
         if command == 'screen':

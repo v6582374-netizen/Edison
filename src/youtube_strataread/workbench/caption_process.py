@@ -162,6 +162,8 @@ def _run():
             "error",
             kind="network"
             if failure.kind == "transient"
+            else "maintenance"
+            if isinstance(error, (OSError, ImportError, TypeError))
             else failure.category
             if failure.category in {"private", "deleted", "access_denied"}
             else "user"

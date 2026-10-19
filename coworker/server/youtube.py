@@ -292,7 +292,6 @@ class YouTubeWorkbench:
             except (ContentSessionError, OSError) as error:
                 from youtube_strataread.workbench.content_session import content_failure
                 error = content_failure(error)
-                self.content_session.record_failure(error)
                 if error.kind == "network":
                     self.workspace.youtube_requests.network_failed(str(error))
                 return {"ok": False, "error": str(error), "kind": error.kind}

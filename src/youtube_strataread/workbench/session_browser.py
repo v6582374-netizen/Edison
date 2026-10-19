@@ -22,7 +22,15 @@ from youtube_strataread.workbench.content_session import ContentSessionError
 
 
 class ServerBrowser:
-    def __init__(self, *, owner_fd=None, start_url="https://www.youtube.com/", headless=False):
+    def __init__(
+        self,
+        *,
+        owner_fd=None,
+        start_url="https://www.youtube.com/",
+        headless=False,
+        command_timeout=30,
+    ):
+        self.command_timeout = command_timeout
         self.headless = headless
         self.owner_fd = owner_fd
         self.start_url = start_url
@@ -69,10 +77,12 @@ class ServerBrowser:
 
     def _read(self, timeout=30):
         if not select.select([self.process.stdout], [], [], timeout)[0]:
+            self.close()
             raise ContentSessionError("maintenance", "服务器浏览器响应超时，请关闭后重新打开。")
         try:
             result = json.loads(self.process.stdout.readline())
         except (ValueError, OSError):
+            self.close()
             raise ContentSessionError(
                 "maintenance", "服务器浏览器已退出，请检查运行环境。"
             ) from None
@@ -94,8 +104,9 @@ class ServerBrowser:
                 json.dumps({"command": command, "arguments": arguments}) + "\n"
             )
             self.process.stdin.flush()
-            return self._read()
+            return self._read(timeout=self.command_timeout)
         except (BrokenPipeError, OSError):
+            self.close()
             raise ContentSessionError("maintenance", "服务器浏览器连接已结束。") from None
 
     def snapshot(self):
