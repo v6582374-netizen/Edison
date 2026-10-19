@@ -7,7 +7,7 @@ import type {Page, APIRequestContext} from '@playwright/test';
 
 export type Scenario = {model_ready?: boolean; caption_failure?: boolean; hold_classification?: boolean; platform_pages?: boolean; channels?: string[]; videos?: {id: string; published: number; added?: number; channel?: string; kind?: string; claimed_publication?: number; live?: Record<string, string>; caption_status?: string; shorts?: boolean | null; listed?: boolean}[];
   global_failure?: string; failure_endpoint?: string; auth_failure?: boolean; channel_failure?: string; caption_cooldown?: boolean; more_pages?: boolean};
-export async function harness(page: Page, request: APIRequestContext, scenario: Scenario, releaseModel = true) {
+export async function harness(page: Page, request: APIRequestContext, scenario: Scenario, releaseModel = true, language = "zh") {
   const root = await mkdtemp(join(tmpdir(), 'edison-api-'));
   const now = Math.floor(Date.now()/1000);
   const write = async (name: string, value='go') => {await writeFile(join(root,name+'.tmp'),value);await rename(join(root,name+'.tmp'),join(root,name));};
@@ -18,7 +18,7 @@ export async function harness(page: Page, request: APIRequestContext, scenario: 
   let backend: ReturnType<typeof spawn>;
   let url = '';
   const start = async () => {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-api-server.py',root],{cwd:resolve('../..'),env:{...process.env,PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe']});
+    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-api-server.py',root],{cwd:resolve('../..'),env:{...process.env,EDISON_E2E_WEB:'1',PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe']});
   let logs=''; backend.stderr!.on('data',chunk=>logs+=chunk);
   const port=await new Promise<number>((done,reject)=>{
     let output='';const timer=setTimeout(()=>reject(new Error(logs)),30000);
@@ -44,7 +44,7 @@ export async function harness(page: Page, request: APIRequestContext, scenario: 
     try {const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'youtube-api-e2e'}});await route.fulfill({response});}
     catch {await route.abort();}
   });
-  await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
+  await page.addInitScript(lang=>localStorage.setItem('openworker.lang',lang), language);
   await page.goto('/');await page.getByTestId('nav-youtube').click();
   const authorize=async()=>{
     await page.getByRole('button',{name:'订阅频道',exact:true}).click();
@@ -54,7 +54,7 @@ export async function harness(page: Page, request: APIRequestContext, scenario: 
     await page.getByRole('button',{name:'关闭',exact:true}).click();
   };
   await call('connection.import_authorization', {client_id:'fixture-client',client_secret:'fixture-client-secret',refresh_token:'fixture-refresh-secret'});
-  await page.getByRole('button',{name:'处理进度',exact:true}).click();
+  await page.getByRole('button',{name:language === 'en' ? 'Progress' : '处理进度',exact:true}).click();
   const toggle=async(on: boolean)=>{
     await page.getByRole('button',{name:on?'恢复自动更新':'完成当前文档后暂停',exact:true}).click();
     await expect(page.getByRole('button',{name:on?'完成当前文档后暂停':'恢复自动更新',exact:true})).toBeEnabled();

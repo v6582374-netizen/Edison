@@ -158,7 +158,7 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
         disabled={busy} onClick={() => void run("activity.retry_all_failed")}><Icon name="retry" /></button>}
     </>, actionsTarget)}
     {activity && !activity.model_ready && <button className="yp-btn" onClick={onModelSettings}>{yt("连接生成模型")}</button>}
-    {activity?.drain_paused && active && <p className="yp-progress-note">{yt("已请求暂停，当前文档完成后不再领取新任务。")}</p>}
+    {activity?.drain_paused && active && <p className="yp-progress-note">{yt("自动更新已暂停；已接收的手动请求仍可继续。")}</p>}
     {!!activity?.youtube_requests?.reason && <p className="yp-progress-notice" role="status">{activity.youtube_requests.reason}</p>}
     {cooling && <p className="yp-progress-notice" role="status">{yt("YouTube 获取请求已暂停，预计")}{new Date(cooldownUntil * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})} {yt("后再尝试（约")}{Math.ceil((cooldownUntil * 1000 - now) / 60000)} {yt("分钟）。已有文稿可以继续阅读；重启或手动恢复不会提前解除冷却。")}</p>}
 

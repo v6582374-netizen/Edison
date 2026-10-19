@@ -5,10 +5,11 @@ import html
 import json
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from youtube_strataread.workbench.connection import ConnectionService, SubscriptionSource
 from youtube_strataread.workbench.freshness import WINDOW_SECONDS, event_completion

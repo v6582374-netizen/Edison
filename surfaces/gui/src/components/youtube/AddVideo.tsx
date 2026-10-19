@@ -24,6 +24,7 @@ export function AddVideo({ onAccepted }: { onAccepted: (result: VideoRequest) =>
     if (!value.accepted) { setUncertain(true); setMessage(yt("结果待确认；尚未查到保存记录，可再次核对或幂等重发。")); return; }
     try { sessionStorage.removeItem(pendingKey); } catch { /* optional persistence */ }
     setUncertain(false); setResult(value); setMessage("");
+    if (value.disposition === "deleted") setRequestId("");
     if (value.disposition === "document" || value.disposition === "progress") onAccepted(value);
   }
   async function confirm(id = requestId) {

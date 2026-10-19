@@ -12,11 +12,14 @@ test('manual old outside-subscription video runs with Auto Update off and duplic
     await expect(target.getByRole('button',{name:'打开现有文档'})).toBeVisible({timeout:20000});
     expect((await app.call('activity.snapshot')).drain_paused).toBe(true);
     expect((await app.call('collection.preferences')).sources).toEqual([]);
+    await app.scenario({channels:[],auth_failure:true,global_failure:'service'});
+    const requestsBefore = (await app.requests()).length;
     await page.getByRole('button',{name:'添加视频',exact:true}).click();
     await page.getByLabel('视频链接',{exact:true}).fill('https://www.youtube.com/watch?v=abcdefghijk&list=PLtest');
     await page.getByLabel('视频链接',{exact:true}).press('Enter');
     await expect(page.getByRole('article',{name:'abcdefghijk'})).toBeVisible();
     expect((await app.call('library.inspect',{video_id:'abcdefghijk'})).generation_records).toHaveLength(1);
+    expect((await app.requests()).length).toBe(requestsBefore);
   } finally { await app.close(); }
 });
 
@@ -76,6 +79,7 @@ test('cancellation survives repost and crash; explicit manual restoration resume
     await app.stop(); await app.start();
     await page.getByRole('button',{name:'恢复此视频处理'}).click();
     await expect(page.getByRole('region',{name:'已接收的视频'})).toBeVisible();
+    await page.close();
     await app.stop(); await app.scenario({...scenario,model_ready:true}); await app.start();
     await expect.poll(()=>app.exists('caption-abcdefghijk'),{timeout:15000}).toBe(true);
     await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
@@ -83,7 +87,7 @@ test('cancellation survives repost and crash; explicit manual restoration resume
   } finally {await app.close();}
 });
 
-test('unavailable video requires explicit retry and retained manuscript is not overwritten',async({page,request})=>{
+test('unavailable video requires explicit retry',async({page,request})=>{
   const scenario={channels:[],videos:[{id:'abcdefghijk',published:1577836800}],caption_failure:true};
   const app=await harness(page,request,scenario);
   try {
@@ -116,5 +120,69 @@ test('manual live video is checked after ending even outside subscriptions with 
     await app.clock(now+301);
     await expect.poll(async()=>(await app.call('activity.snapshot')).ready,{timeout:8000}).toBe(1);
     expect((await app.call('activity.snapshot')).drain_paused).toBe(true);
+  }finally{await app.close();}
+});
+
+test('manual submission racing discovery merges one identity and grants no permission to sibling tasks',async({page,request})=>{
+  const now=Math.floor(Date.now()/1000);
+  const scenario={channels:['alpha'],videos:[{id:'abcdefghijk',published:now-60},{id:'lmnopqrstuv',published:now-60}],model_ready:false};
+  const app=await harness(page,request,scenario);
+  try {
+    await page.getByRole('button',{name:'添加视频',exact:true}).click();
+    await page.getByLabel('视频链接',{exact:true}).fill('https://youtu.be/abcdefghijk');
+    const discovering=app.call('collection.refresh_updates');
+    await page.getByRole('button',{name:'添加并处理'}).click(); await discovering;
+    await expect(page.getByRole('region',{name:'已接收的视频'})).toBeVisible();
+    expect((await app.call('library.list')).total).toBe(2);
+    await app.call('collection.set_exclusions',{excluded_channels:['alpha']});
+    await app.scenario({...scenario,channels:[],model_ready:true});
+    await app.call('connection.refresh_subscriptions');
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
+    expect((await app.call('library.inspect',{video_id:'abcdefghijk'})).generation_records).toHaveLength(1);
+    expect(await app.exists('caption-lmnopqrstuv')).toBe(false);
+    expect((await app.call('activity.snapshot')).drain_paused).toBe(true);
+  }finally{await app.close();}
+});
+
+test('English add-video page remains usable by keyboard at a narrow width',async({page,request})=>{
+  const app=await harness(page,request,{channels:[],videos:[{id:'abcdefghijk',published:1577836800}]},true,'en');
+  try {
+    await page.getByRole('button',{name:'Add video',exact:true}).click();
+    await page.setViewportSize({width:390,height:844});
+    const input=page.getByLabel('Video link',{exact:true});
+    await input.fill('https://youtube.com/@channel'); await input.press('Enter');
+    await expect(page.getByRole('status').filter({hasText:'Channels and playlist-only links are not supported.'})).toBeVisible();
+    await input.fill('https://youtu.be/abcdefghijk'); await input.press('Tab');
+    await expect(page.getByRole('button',{name:'Add and prepare'})).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('region',{name:'Accepted video'})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Open existing document'})).toBeVisible({timeout:20000});
+  }finally{await app.close();}
+});
+
+
+test('unknown save result survives reload and idempotent resend without another generation',async({page,request})=>{
+  const app=await harness(page,request,{channels:[],videos:[{id:'abcdefghijk',published:1577836800}]});
+  let interrupted=true;
+  try {
+    await page.route('**/v1/youtube/capability',async route=>{
+      const name=route.request().postDataJSON().capability;
+      if(interrupted && name==='manual.submit') {
+        await route.fetch({url:app.address()+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'youtube-api-e2e'}});
+        await route.abort();
+      } else if(interrupted && name==='manual.confirm') await route.abort();
+      else await route.fallback();
+    });
+    await page.getByRole('button',{name:'添加视频',exact:true}).click();
+    await page.getByLabel('视频链接',{exact:true}).fill('https://youtu.be/abcdefghijk');
+    await page.getByRole('button',{name:'添加并处理'}).click();
+    await expect(page.getByRole('button',{name:'核对保存记录'})).toBeVisible();
+    await page.reload(); await page.getByTestId('nav-youtube').click();
+    await page.getByRole('button',{name:'添加视频',exact:true}).click();
+    await expect(page.getByLabel('视频链接',{exact:true})).toHaveValue('https://youtu.be/abcdefghijk');
+    interrupted=false;
+    await page.getByRole('button',{name:'幂等重发'}).click();
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
+    expect((await app.call('library.inspect',{video_id:'abcdefghijk'})).generation_records).toHaveLength(1);
   }finally{await app.close();}
 });

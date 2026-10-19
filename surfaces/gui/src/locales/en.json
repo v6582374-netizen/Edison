@@ -269,7 +269,6 @@
     "待确认类型": "Awaiting classification",
     "已排除 Shorts": "Excluded Shorts",
     "限流等待": "Rate limited",
-    "等待重试": "Waiting to retry",
     "自动重试已用尽": "Automatic retries used up",
     "已有素材保留，需手动继续重试。": "Existing materials are kept. Retry manually to continue.",
     "字幕尚未提供": "Captions not yet available",
@@ -470,7 +469,8 @@
     "此视频的访问权限或基础信息尚未验证；尚未添加。": "Video access or metadata could not be verified. It has not been added.",
     "视频记录不存在，请重新检查链接。": "The video record is missing. Please check the link again.",
     "视频状态已变化，请查看现有任务或文档。": "The video status changed. Check its existing task or document.",
-    "不支持的手动处理操作。": "Unsupported manual preparation action."
+    "不支持的手动处理操作。": "Unsupported manual preparation action.",
+    "自动更新已暂停；已接收的手动请求仍可继续。": "Auto Update is paused; accepted manual requests can continue."
   },
   "boot": {
     "starting": "Starting OpenWorker…",

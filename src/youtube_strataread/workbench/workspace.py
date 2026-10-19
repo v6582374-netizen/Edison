@@ -618,7 +618,7 @@ class LocalWorkspace:
                 cursor = connection.execute(
                     f"""UPDATE candidates SET preparation_state = ?, preparation_stage = NULL,
                         stage_updated_at = ?, commenced_at = NULL, preparation_started_at = NULL,
-                        preparation_completed_at = NULL, failure_reason = NULL
+                        preparation_completed_at = NULL, failure_reason = NULL, request_kind = 'automatic'
                         WHERE video_id = ? AND preparation_state IN ({",".join("?" for _ in expected)})""",
                     (target, time.time(), video_id, *expected),
                 )
