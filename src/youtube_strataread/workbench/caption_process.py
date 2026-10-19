@@ -7,6 +7,7 @@ logs or the Web response; the host retains scheduling and commencement checks.
 from __future__ import annotations
 
 import json
+import os
 import select
 import subprocess
 import sys
@@ -112,13 +113,24 @@ class CaptionProcess:
 
 
 def _run():
+    # Keep the private protocol on a non-inherited descriptor. quiet=True does
+    # not silence yt-dlp progress; Python prints, raw fd writes and descendants
+    # must never share the host's JSON channel or disclose external diagnostics.
+    sys.stdout.flush()
+    with os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8") as protocol:
+        with open(os.devnull, "w") as discarded:
+            os.dup2(discarded.fileno(), sys.stdout.fileno())
+        _run_worker(protocol)
+
+
+def _run_worker(protocol):
     from pathlib import Path
 
     from youtube_strataread.downloader.youtube import download_subtitles
     from youtube_strataread.workbench.retry import classify_caption
 
     def emit(event, **values):
-        print(json.dumps({"event": event, **values}), flush=True)
+        print(json.dumps({"event": event, **values}), file=protocol, flush=True)
 
     def event(name, **values):
         emit(name, **values)
