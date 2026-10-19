@@ -123,8 +123,11 @@ class YouTubeWorkbench:
         )
         self.connection.claim_server_ownership()
         self.workspace.recover_interrupted_preparations()
+        from youtube_strataread.workbench.manual import ManualVideoRequests
+        self.manual = ManualVideoRequests(self.workspace, self.connection)
         self.discovery = SubscriptionDiscovery(
-            workspace=self.workspace, source=YouTubeUploadsAPI(workspace=self.workspace, connection=self.connection)
+            workspace=self.workspace, source=YouTubeUploadsAPI(workspace=self.workspace, connection=self.connection),
+            manual_timing_check=self.manual.recheck_timing,
         )
         self.preparation = PreparationService(
             workspace=self.workspace,
@@ -239,6 +242,19 @@ class YouTubeWorkbench:
             return self.workspace.save_summary(video_id, _bounded_summary(draft))
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability.startswith("manual."):
+            try:
+                if capability == "manual.submit":
+                    result = self.manual.submit(arguments.get("url"), arguments.get("request_id"))
+                elif capability == "manual.confirm":
+                    result = self.manual.confirm(arguments.get("request_id"))
+                elif capability in {"manual.restore", "manual.retry"}:
+                    result = self.manual.act(str(arguments.get("video_id", "")), arguments.get("request_id"), capability.split(".")[1])
+                else:
+                    raise ValueError("不支持的手动处理操作。")
+                return {"ok": True, "result": result}
+            except (ConnectionError, ValueError) as error:
+                return {"ok": False, "error": str(error)}
         if capability == "summary.ensure":
             try:
                 video_id = str(arguments.get("video_id", "")).strip()

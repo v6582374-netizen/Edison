@@ -8,7 +8,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from youtube_strataread.workbench.connection import ConnectionService, SubscriptionSource
 from youtube_strataread.workbench.freshness import WINDOW_SECONDS, event_completion
@@ -196,8 +196,9 @@ class YouTubeUploadsAPI:
 
 class SubscriptionDiscovery:
     """One bounded pass; discovery never waits for captions or model processing."""
-    def __init__(self, *, workspace: LocalWorkspace, source: UploadsSource) -> None:
+    def __init__(self, *, workspace: LocalWorkspace, source: UploadsSource, manual_timing_check: Callable[[], None] | None = None) -> None:
         self.workspace, self.source = workspace, source
+        self.manual_timing_check = manual_timing_check
         self._lock = threading.Lock()
         self._stopping = threading.Event()
 
@@ -208,6 +209,8 @@ class SubscriptionDiscovery:
     def run(self, stop: threading.Event, wake: threading.Event | None = None) -> None:
         """Independent local scheduler; no subtitle/model work runs on this loop."""
         while not stop.wait(.5):
+            if self.manual_timing_check and not self._stopping.is_set():
+                self.manual_timing_check()
             if self.workspace.meta('drain_paused') == '1':
                 continue
             previous = json.loads(self.workspace.meta('youtube_discovery') or '{}')

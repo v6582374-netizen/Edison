@@ -28,7 +28,7 @@ from shorts_fixture import player_page
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from coworker.server import SessionManager, create_app
 from youtube_strataread.downloader.youtube import SubtitleResult
-from youtube_strataread.workbench import connection, discovery, shorts, workspace
+from youtube_strataread.workbench import connection, discovery, manual, shorts, workspace
 from youtube_strataread.workbench.library import YtDlpCaptions
 
 
@@ -62,7 +62,7 @@ def keyring_write(self, service, account, password):
 
 
 Keyring.get_password, Keyring.set_password = keyring_read, keyring_write
-workspace.time = discovery.time = SimpleNamespace(time=now)
+workspace.time = discovery.time = manual.time = SimpleNamespace(time=now)
 
 
 def response(payload):
@@ -171,6 +171,9 @@ def captions(self, url, *, before_subtitles=None):
         video = next(v for v in config().get('videos', []) if v['id'] == video_id)
         before_subtitles({'id':video_id,'live_status':video.get('caption_status','not_live')})
     (root / ('caption-' + video_id)).touch()
+    if config().get('caption_failure'):
+        from youtube_strataread.downloader.youtube import YouTubeError
+        raise YouTubeError('This video is unavailable')
     if config().get('caption_cooldown'):
         from youtube_strataread.downloader.youtube import YouTubeError
         raise YouTubeError('HTTP Error 429: Too Many Requests')
@@ -192,7 +195,7 @@ class Provider(ProviderClient):
 
 
 manager = SessionManager(data_dir=root / 'host', provider=Provider(), model='fixture-model')
-manager.get_settings = lambda: {'model_ready': True}
+manager.get_settings = lambda: {'model_ready': config().get('model_ready', True)}
 app = create_app(manager)
 sock = socket.socket()
 sock.bind(('127.0.0.1', 0))
