@@ -44,8 +44,15 @@ from youtube_strataread.workbench import connection, discovery, shorts, workspac
 from youtube_strataread.workbench.connection import OAuthCredentials
 
 
-def now():
+def auth_now():
     return float((root / "clock").read_text())
+
+
+def now():
+    # The clock file selects an epoch; real elapsed time still advances pacing
+    # between requests. Auth alone uses the exact epoch for boundary assertions.
+    clock = root / "clock"
+    return float(clock.read_text()) + max(0, time.time() - clock.stat().st_mtime)
 
 
 def record(kind, value):
@@ -62,7 +69,8 @@ def wait(name):
 
 
 controlled = SimpleNamespace(time=now, monotonic=now)
-workspace.time = discovery.time = youtube_api.time = web_auth.time = controlled
+workspace.time = discovery.time = youtube_api.time = controlled
+web_auth.time = SimpleNamespace(time=auth_now, monotonic=auth_now)
 # Connection uses monotonic to serialize real refresh requests; only wall time advances.
 connection.time = SimpleNamespace(time=now, monotonic=time.monotonic)
 
