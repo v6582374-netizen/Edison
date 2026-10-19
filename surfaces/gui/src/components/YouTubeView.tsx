@@ -741,6 +741,7 @@ export function YouTubeView({
             ) : null}</footer>}
       </aside>}
       <Dialog
+        wide={panel === "connection"}
         open={panel === "channels" || panel === "connection"} interaction={modal} fallbackFocusRef={mainRef}
         title={panel === "channels" ? yt("订阅频道") : panel === "connection" ? yt("连接 YouTube") : yt("文档信息")}
         subtitle={panel === "channels" ? yt("默认自动生成所有订阅频道的阅读文档。") : panel === "connection" ? yt("分别完成官方订阅授权与服务器内容登录；连接保存在此 Edison 实例。") : selected?.channel_title}

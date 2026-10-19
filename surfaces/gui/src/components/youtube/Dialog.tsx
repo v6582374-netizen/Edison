@@ -5,7 +5,7 @@ import { Icon } from "../Icon";
 import { ModalSurface, type ModalInput, useModalInteraction } from "../ModalSurface";
 
 export function Dialog({
-  open, interaction, fallbackFocusRef, title, subtitle, children, footer, onClose, detail = false,
+  open, interaction, fallbackFocusRef, title, subtitle, children, footer, onClose, detail = false, wide = false,
 }: {
   open: boolean;
   interaction: ReturnType<typeof useModalInteraction>;
@@ -16,12 +16,13 @@ export function Dialog({
   footer?: ReactNode;
   onClose: (input?: ModalInput) => void;
   detail?: boolean;
+  wide?: boolean;
 }) {
   useTranslation();
   return (
     <ModalSurface
       open={open} interaction={interaction} fallbackFocusRef={fallbackFocusRef}
-      label={title} surfaceClassName={`yp-dialog ${detail ? "yp-detail" : ""}`}
+      label={title} surfaceClassName={`yp-dialog ${detail ? "yp-detail" : ""} ${wide ? "yp-dialog-wide" : ""}`}
       dismissOnBackdrop onRequestClose={() => onClose(interaction.closeInput.current)}
     >
       <header className="yp-dialoghead">

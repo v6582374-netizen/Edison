@@ -393,6 +393,9 @@
   flex-direction: column;
   overflow: hidden;
 }
+.yp-dialog-wide {
+  width: 1152px;
+}
 .yp-dialoghead {
   padding: 23px 25px 18px;
   display: flex;
