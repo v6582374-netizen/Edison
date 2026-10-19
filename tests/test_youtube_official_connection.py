@@ -141,3 +141,30 @@ def test_repeated_handoff_respects_official_quota_gate(tmp_path, monkeypatch):
             assert not response['ok']
         assert external == ['token', 'subscriptions']
     app.state.youtube.close()
+
+
+def test_sidecar_writer_cannot_bypass_web_credential_owner(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+
+    library = tmp_path / 'library'
+    monkeypatch.setenv('YOUTUBE_WORKBENCH_WORKSPACE', str(library))
+    monkeypatch.setenv('EDISON_CREDENTIAL_FILE', str(tmp_path / 'credentials.json'))
+    monkeypatch.setenv('COWORKER_API_TOKEN', 'test-web')
+    app = create_app(SessionManager(data_dir=tmp_path / 'host'))
+    request = json.dumps({'id':'configure','capability':'connection.configure',
+                         'arguments':{'client_id':'sidecar-client','client_secret':'fixture-secret'}}) + '\n'
+    def sidecar():
+        result = subprocess.run([sys.executable, '-m', 'youtube_strataread.workbench.sidecar'],
+            input=request, text=True, capture_output=True,
+            env={**os.environ, 'YOUTUBE_WORKBENCH_TEST_VAULT':'1'}, timeout=10)
+        assert result.returncode == 0, result.stderr
+        return __import__('json').loads(result.stdout.splitlines()[0])
+    with TestClient(app, headers={'X-OpenWorker-Token':'test-web'}) as web:
+        assert web.post('/v1/youtube/capability', json={'capability':'connection.status'}).json()['ok']
+        rejected = sidecar()
+        assert not rejected['ok'] and 'owner' in rejected['error']
+    app.state.youtube.close()
+    # The independent CLI remains valid once the canonical owner has stopped.
+    assert sidecar()['ok']

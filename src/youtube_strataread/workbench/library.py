@@ -107,6 +107,8 @@ class PreparationService:
             self.workspace.youtube_requests.stopped.set()
 
     def _defer_request(self, video_id: str, error: Exception) -> bool:
+        if not self.workspace.caption_check_allowed(video_id):
+            return True
         if isinstance(error, YouTubeRequestsStopped):
             self.workspace.set_preparation_state(video_id, "queued")
             return True
@@ -154,7 +156,11 @@ class PreparationService:
         if asset is None:
             return False
         needs_acquisition = not self.workspace.retained_transcript(str(asset["video_id"]))
-        context = self.workspace.youtube_requests.acquisition() if needs_acquisition else nullcontext()
+        def before_request() -> None:
+            if not self.workspace.caption_check_allowed(str(asset["video_id"])):
+                raise PreparationDeferred()
+        context = (self.workspace.youtube_requests.acquisition(before_request=before_request)
+                   if needs_acquisition else nullcontext())
         try:
             with context:
                 try:
@@ -162,6 +168,8 @@ class PreparationService:
                 finally:
                     if needs_acquisition:
                         self.workspace.youtube_requests.probe_unproven()
+        except PreparationDeferred:
+            return True
         except Exception as error:
             if self._defer_request(str(asset["video_id"]), error):
                 return True

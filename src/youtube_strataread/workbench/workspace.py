@@ -338,7 +338,37 @@ class LocalWorkspace:
                    AND preparation_state IN ('awaiting_timing', 'awaiting_completion')
                    ORDER BY COALESCE(timing_checked_at, 0), video_id LIMIT ?""", (channel_id, limit))]
 
+    def _expire_caption_checks(self, connection: sqlite3.Connection) -> None:
+        now = self.now()
+        expired = connection.execute(
+            """SELECT c.video_id FROM candidates c WHERE caption_first_absent_at IS NOT NULL
+               AND caption_first_absent_at + 86400 < ?
+               AND preparation_state IN ('queued', 'waiting_retry', 'rate_limited',
+                                         'awaiting_classification', 'acquiring')
+               AND NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = c.video_id)""",
+            (now,),
+        ).fetchall()
+        reason = "字幕自动检查已结束，需要时请显式重试。已有素材保留。"
+        for row in expired:
+            connection.execute(
+                """UPDATE candidates SET preparation_state = 'failed', preparation_stage = 'failed',
+                   caption_checks_ended_at = ?, retry_at = NULL, failure_reason = ?,
+                   preparation_completed_at = ?, stage_updated_at = ? WHERE video_id = ?""",
+                (now, reason, now, now, row[0]),
+            )
+            self._activity_event(connection, row[0], "failed", reason)
+
+    def caption_check_allowed(self, video_id: str) -> bool:
+        """Recheck the finite window immediately before external acquisition I/O."""
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._expire_caption_checks(connection)
+            row = connection.execute("SELECT preparation_state FROM candidates WHERE video_id = ?",
+                                     (video_id,)).fetchone()
+            return bool(row and row[0] in {"acquiring", "generating"})
+
     def _recheck_waiting(self, connection: sqlite3.Connection) -> None:
+        self._expire_caption_checks(connection)
         cursor = connection.execute(
             """SELECT * FROM candidates
                WHERE (commenced_at IS NULL OR timing_status != 'publication')
@@ -368,6 +398,7 @@ class LocalWorkspace:
         with sqlite3.connect(self.database_path) as connection:
             connection.row_factory = sqlite3.Row
             connection.execute('BEGIN IMMEDIATE')
+            self._expire_caption_checks(connection)
             row = connection.execute(
                 "SELECT * FROM candidates WHERE video_id = ?",
                 (video_id,),

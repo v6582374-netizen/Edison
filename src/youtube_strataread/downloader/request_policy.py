@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import re
 import sqlite3
@@ -11,6 +10,8 @@ import time
 from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+
+from youtube_strataread.utils.process_lock import acquire_process_lock
 
 REQUEST_INTERVAL = 2.0
 VIDEO_INTERVAL = 15.0
@@ -140,7 +141,7 @@ class YouTubeRequestPolicy:
         return self.snapshot()["cooldown_until"] > self.now()
 
     @contextmanager
-    def acquisition(self):
+    def acquisition(self, *, before_request=None):
         """One recovering acquisition owns the capability until its result is recorded.
 
         Advisory ownership is released by the OS on normal exit or process death;
@@ -156,9 +157,8 @@ class YouTubeRequestPolicy:
         lock = None
         try:
             if state.get("failure_kind") or state.get("strikes"):
-                lock = self.database_path.with_suffix(".acquisition-lock").open("a+b")
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock = acquire_process_lock(self.database_path.with_suffix(".acquisition-lock"))
                 except BlockingIOError:
                     raise YouTubeRateLimited(self.now() + REQUEST_INTERVAL,
                                              recorded=True, response_received=False) from None
@@ -167,12 +167,20 @@ class YouTubeRequestPolicy:
                 state = self.snapshot()
                 if state["cooldown_until"] > self.now():
                     raise YouTubeRateLimited(state["cooldown_until"], recorded=True, response_received=False)
+            self._acquisition_local.before_request = before_request
+            self._check_acquisition_request()
             self._acquisition_local.active = True
             yield
         finally:
             self._acquisition_local.active = False
+            self._acquisition_local.before_request = None
             if lock is not None:
                 lock.close()
+
+    def _check_acquisition_request(self) -> None:
+        check = getattr(self._acquisition_local, "before_request", None)
+        if check is not None:
+            check()
 
     def probe_unproven(self) -> None:
         """An absent/denied video is not successful capability recovery."""
@@ -198,7 +206,11 @@ class YouTubeRequestPolicy:
                 if delay <= 0:
                     state[field] = now + interval
                     self._write(connection, state)
-                    return
+            if delay <= 0:
+                # Pacing may cross a finite per-video deadline. Do not invoke
+                # its workspace transaction while holding the pacing transaction.
+                self._check_acquisition_request()
+                return
             # Never hold the database while waiting, and remain interruptible on quit.
             self.stopped.wait(min(delay, 0.5))
 
@@ -208,38 +220,33 @@ class YouTubeRequestPolicy:
     def before_video(self) -> None:
         self._take_slot("next_video_at", VIDEO_INTERVAL)
 
-    def limit(self, error: YouTubeRateLimited) -> YouTubeRateLimited:
-        if error.recorded:
-            return error
+    def _record_failure(self, *, kind: str, streak: str, initial_delay: float,
+                        reason: str, retry_at: float | None) -> float:
         with sqlite3.connect(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             state, now = self._read(connection), self.now()
-            state["strikes"] += 1
+            count = state.get(streak, 0) + 1
+            state[streak] = count
             state["failure_sequence"] = state.get("failure_sequence", 0) + 1
-            delay = INITIAL_COOLDOWN * 2 ** (state["strikes"] - 1) if state["strikes"] <= 3 else MAX_COOLDOWN
-            state["failure_kind"] = "rate_limited"
-            state.setdefault("first_failure_at", now)
-            state["last_failure_at"] = now
-            state["reason"] = "YouTube 请求限流，等待共享能力探测。"
-            state["cooldown_until"] = max(state["cooldown_until"], now + delay, error.retry_at or 0)
-            self._write(connection, state)
-        return YouTubeRateLimited(state["cooldown_until"], recorded=True)
-
-    def network_failed(self, reason: str, retry_at: float | None = None) -> float:
-        with sqlite3.connect(self.database_path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            state, now = self._read(connection), self.now()
-            state["failure_sequence"] = state.get("failure_sequence", 0) + 1
-            count = state.get("network_failures", 0) + 1
-            state["network_failures"] = count
-            delay = 600 * 2 ** (count - 1) if count <= 3 else MAX_COOLDOWN
+            delay = initial_delay * 2 ** (count - 1) if count <= 3 else MAX_COOLDOWN
             state["cooldown_until"] = max(state["cooldown_until"], now + delay, retry_at or 0)
-            state["failure_kind"] = "network"
+            state["failure_kind"] = kind
             state.setdefault("first_failure_at", now)
             state["last_failure_at"] = now
             state["reason"] = reason
             self._write(connection, state)
         return state["cooldown_until"]
+
+    def limit(self, error: YouTubeRateLimited) -> YouTubeRateLimited:
+        if error.recorded:
+            return error
+        until = self._record_failure(kind="rate_limited", streak="strikes", initial_delay=INITIAL_COOLDOWN,
+                                     reason="YouTube 请求限流，等待共享能力探测。", retry_at=error.retry_at)
+        return YouTubeRateLimited(until, recorded=True)
+
+    def network_failed(self, reason: str, retry_at: float | None = None) -> float:
+        return self._record_failure(kind="network", streak="network_failures", initial_delay=600,
+                                    reason=reason, retry_at=retry_at)
 
     def caption_succeeded(self, *, observed_sequence: int | None = None) -> None:
         with sqlite3.connect(self.database_path) as connection:

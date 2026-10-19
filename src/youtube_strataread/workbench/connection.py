@@ -258,33 +258,32 @@ class ConnectionService:
         self._verified_this_process = False
 
     def claim_server_ownership(self) -> None:
-        """Hold the canonical workspace lease for the whole server lifetime."""
-        import fcntl
-        if self._owner_handle is not None:
-            return
-        path = self.workspace.root / ".youtube-official-owner.lock"
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            handle = os.fdopen(fd, "a+")
+        """Own the canonical namespace for this Web or independent CLI lifetime."""
+        from youtube_strataread.utils.process_lock import acquire_process_lock
+
+        with self._lock:
+            if self._server_retired:
+                raise OfficialConnectionError("storage", "This credential owner has retired; create a new connection")
+            if self._owner_handle is not None:
+                return
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._owner_handle = acquire_process_lock(self.workspace.root / ".youtube-official-owner.lock")
             except OSError:
-                handle.close()
-                raise
-        except OSError:
-            raise OfficialConnectionError("storage", "Another server owns this library, or the service account cannot acquire its owner lease") from None
-        self._owner_handle = handle
+                raise OfficialConnectionError("storage", "Another process owns this library, or the service account cannot acquire its owner lease") from None
 
     def release_server_ownership(self) -> None:
         with self._lock:
+            self._server_retired = True
             if self._owner_handle is not None:
-                self._server_retired = True
                 self._owner_handle.close()
                 self._owner_handle = None
 
     def _require_active_owner(self) -> None:
         if self._server_retired:
             raise OfficialConnectionError("storage", "This server's credential owner has retired; refresh the page")
+        # Status reads stay available without claiming ownership. Every operation
+        # that can write or refresh credentials must first join the same lease.
+        self.claim_server_ownership()
 
     def watch_subscriptions(self, stop: threading.Event, *, now: Callable[[], float] = time.time,
                             wake: threading.Event | None = None) -> None:
