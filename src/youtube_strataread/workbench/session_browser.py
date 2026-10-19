@@ -202,6 +202,38 @@ def profile_snapshot(profile):
     return "\n".join(rows) + "\n"
 
 
+def _verify_private_display(process, socket_path):
+    """Fail closed unless this live Linux desktop owns only its UNIX listener."""
+    if process.poll() is not None:
+        raise RuntimeError("native desktop exited")
+    root = Path("/proc") / str(process.pid)
+    sockets = set()
+    for descriptor in (root / "fd").iterdir():
+        try:
+            target = descriptor.readlink().as_posix()
+        except FileNotFoundError:
+            continue  # an accepted connection may close during inspection
+        if target.startswith("socket:[") and target.endswith("]"):
+            sockets.add(target[8:-1])
+    for family in ("tcp", "tcp6"):
+        # Unreadable/missing proc tables are not proof that the transport is private.
+        for row in (root / "net" / family).read_text().splitlines()[1:]:
+            fields = row.split()
+            if fields[3] == "0A" and fields[9] in sockets:
+                raise RuntimeError("native desktop opened a TCP listener")
+    for row in (root / "net" / "unix").read_text().splitlines()[1:]:
+        fields = row.split(maxsplit=7)
+        if (
+            len(fields) == 8
+            and fields[6] in sockets
+            and int(fields[3], 16) & 0x10000
+            and fields[4] == "0001"
+            and fields[7] == str(socket_path)
+        ):
+            return
+    raise RuntimeError("native desktop private listener could not be verified")
+
+
 def _serve(profile, start_url, runtime):
     import shutil
 
@@ -255,6 +287,12 @@ def _serve(profile, start_url, runtime):
         display = subprocess.Popen(
             [
                 display_executable,
+                "-norc",
+                "-no6",
+                "-noipv6",
+                "-noipv4",
+                "-rfbportv6",
+                "-1",
                 "-display",
                 os.environ["DISPLAY"],
                 "-auth",
@@ -284,10 +322,21 @@ def _serve(profile, start_url, runtime):
                 raise RuntimeError("native desktop failed")
             time.sleep(0.05)
         desktop = Desktop(socket_path)
+        _verify_private_display(display, socket_path)
         wait_for_native_window(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
+        _verify_private_display(display, socket_path)
         reply()
-        for line in sys.stdin:
+        while True:
+            # Readiness is not a lifetime guarantee: inspect idle desktops too.
+            _verify_private_display(display, socket_path)
+            if not select.select([sys.stdin], [], [], 1)[0]:
+                continue
+            line = sys.stdin.readline()
+            if not line:
+                break
             try:
+                # A listener may appear while select waited for human input.
+                _verify_private_display(display, socket_path)
                 payload = json.loads(line)
                 command, args = payload["command"], payload.get("arguments", {})
                 if browser.poll() is not None:

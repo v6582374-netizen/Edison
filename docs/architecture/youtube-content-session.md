@@ -12,7 +12,14 @@ Xvfb display and x11vnc in one process group. Its private UNIX RFB client forwar
 only explicit human input; it does not use Playwright, CDP, page scripting,
 automation fingerprints, or browser security-disable flags. The Web UI relays screenshot, pointer and
 keyboard operations over the existing authenticated capability endpoint. It
-opens no CDP, VNC, or other public browser listener. Screens and typed input are
+opens no CDP, VNC, or other public browser listener. x11vnc ignores user rc files,
+explicitly disables IPv4 and both x11vnc/LibVNCServer IPv6 listeners; `-rfbport 0`
+alone is insufficient for builds with IPv6 enabled. Before handoff readiness,
+the driver verifies the desktop process's socket ownership against Linux proc
+TCP/IPv6 and UNIX listener tables; an unexpected TCP listener, missing private
+UNIX listener or unreadable inspection state fails closed. This check repeats
+before every command and on a one-second idle polling interval, retiring the desktop
+when its transport changes. Screens and typed input are
 not persisted; handoff responses have `Cache-Control: no-store`. Operators must
 also keep request-body tracing disabled at reverse proxies and observability
 layers. Passwords and security challenges are completed by the person on the
@@ -144,10 +151,17 @@ and 14-day trial remain unverified. Existing historical prototype success does
 not fill those gaps or establish acceptance of this fresh managed profile.
 
 To run optional real-browser coverage, provision native Chrome, Xvfb, xauth and
-x11vnc in an isolated Linux environment under the same resource cap. Configure
+x11vnc and `ss` (iproute2) in an isolated Linux environment under the same resource cap. Configure
 `EDISON_CONTENT_CHROMIUM` and optionally `EDISON_CONTENT_X11VNC`, then run
 `PYTHONPATH=src:. python -m pytest tests/test_session_browser.py`. Without Linux
-and those executables the native test reports **skipped**; UNIX RFB, pipe-timeout
+and those executables the native tests report **skipped**. Real native lifecycle
+coverage inspects TCP and UNIX listeners across the browser process group after
+start and reopen; neither launch-argument assertions nor a firewall establish
+private transport. Deliberately misconfigured real x11vnc processes must be
+rejected for either IPv4 or IPv6 listening, with their processes and ports cleaned
+up. An inherited real socket activated after readiness verifies both idle
+retirement without another request and rejection of subsequent input/screenshot
+commands. UNIX RFB, pipe-timeout
 and process-group tests still run. A skip is missing evidence, not acceptance.
 The Web E2E verifies native keyboard clipboard paste
 in Chromium; WebKit runs the other content-session scenarios without claiming

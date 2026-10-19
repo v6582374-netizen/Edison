@@ -63,6 +63,7 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
     try:
         with phase("first_start"):
             browser.start(tmp_path / "profile")
+        assert_private_native_listeners(browser)
         assert seen.wait(10)
         time.sleep(1)
         with phase("first_screen"):
@@ -86,6 +87,7 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
         with phase("reopen"):
             browser.start(tmp_path / "profile")
             assert browser.command("screen", {})["image"].startswith("iVBOR")
+            assert_private_native_listeners(browser)
     finally:
         with phase("final_close"):
             browser.close()
@@ -173,3 +175,143 @@ def test_incomplete_native_cookie_decryption_is_maintenance_not_a_snapshot(tmp_p
         profile_snapshot(tmp_path)
     assert failure.value.kind == "maintenance"
     assert "synthetic sensitive detail" not in str(failure.value)
+
+
+def assert_private_native_listeners(browser):
+    """Observe the real process group through ss, independently of launch flags."""
+    import subprocess
+    from pathlib import Path
+
+    members = []
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            with contextlib.suppress(ProcessLookupError):
+                if os.getpgid(int(entry.name)) == browser.process.pid:
+                    members.append(int(entry.name))
+    tcp = subprocess.check_output(["ss", "-H", "-ltnp"], text=True)
+    unix = subprocess.check_output(["ss", "-H", "-lxnp"], text=True)
+    assert members
+    assert not any(f"pid={pid}," in tcp for pid in members), tcp
+    assert any(
+        "vnc.sock" in line and any(f"pid={pid}," in line for pid in members)
+        for line in unix.splitlines()
+    ), unix
+
+
+@pytest.mark.parametrize("family", ["ipv4", "ipv6"])
+def test_native_handoff_rejects_tcp_listener_and_reaps_processes(tmp_path, monkeypatch, family):
+    import shutil
+    import socket
+    import sys
+    from pathlib import Path
+
+    executable = os.environ.get("EDISON_CONTENT_CHROMIUM")
+    display = os.environ.get("EDISON_CONTENT_X11VNC") or shutil.which("x11vnc")
+    if sys.platform != "linux" or not executable or not display or not shutil.which("Xvfb"):
+        pytest.skip("Native Linux Chrome/Xvfb/x11vnc required")
+    # Deliberately misconfigure the real desktop executable at its system boundary.
+    # A loopback listener is also forbidden; no public interface is requested.
+    address = ("127.0.0.1", 0) if family == "ipv4" else ("::1", 0)
+    with socket.socket(socket.AF_INET if family == "ipv4" else socket.AF_INET6) as probe:
+        probe.bind(address)
+        port = probe.getsockname()[1]
+    pid_file = tmp_path / "display.pid"
+    wrapper = tmp_path / "misconfigured-vnc"
+    wrapper.write_text(
+        f"#!{shutil.which('python3')}\n"
+        "import os,sys,pathlib\n"
+        "args=sys.argv[1:]\n"
+        f"family={family!r}\n"
+        "if family == 'ipv4':\n"
+        "    args.remove('-noipv4')\n"
+        "    args.extend(['-listen','127.0.0.1'])\n"
+        "else:\n"
+        "    args.remove('-no6')\n"
+        "    args.remove('-noipv6')\n"
+        "    args.extend(['-6','-listen6','::1'])\n"
+        f"args[args.index('-rfbport')+1]={str(port)!r}\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"os.execv({display!r}, [{display!r}, *args])\n"
+    )
+    wrapper.chmod(0o700)
+    monkeypatch.setenv("EDISON_CONTENT_BROWSER_ENABLED", "1")
+    monkeypatch.setenv("EDISON_CONTENT_X11VNC", str(wrapper))
+    browser = ServerBrowser(start_url="about:blank")
+    try:
+        with pytest.raises(ContentSessionError) as failure:
+            browser.start(tmp_path / "profile")
+        assert failure.value.kind == "maintenance"
+        assert not browser.alive
+        assert not Path("/proc", pid_file.read_text()).exists()
+        with socket.socket(socket.AF_INET if family == "ipv4" else socket.AF_INET6) as check:
+            check.settimeout(1)
+            assert check.connect_ex((address[0], port)) != 0
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize("detection", ["idle", "command"])
+def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatch, detection):
+    import json
+    import shutil
+    import socket
+    import sys
+    import time
+    from pathlib import Path
+
+    executable = os.environ.get("EDISON_CONTENT_CHROMIUM")
+    display = os.environ.get("EDISON_CONTENT_X11VNC") or shutil.which("x11vnc")
+    if sys.platform != "linux" or not executable or not display or not shutil.which("Xvfb"):
+        pytest.skip("Native Linux Chrome/Xvfb/x11vnc required")
+    info_file = tmp_path / "desktop.json"
+    trigger = tmp_path / "enable-listener"
+    listening = tmp_path / "listening"
+    wrapper = tmp_path / "controlled-vnc"
+    wrapper.write_text(
+        f"#!{shutil.which('python3')}\n"
+        "import os,sys,pathlib,json,socket,time\n"
+        "sock=socket.socket(); sock.bind(('127.0.0.1',0)); sock.set_inheritable(True)\n"
+        "child=os.fork()\n"
+        "if child == 0:\n"
+        f"    while not pathlib.Path({str(trigger)!r}).exists(): time.sleep(.01)\n"
+        "    sock.listen(); sock.close()\n"
+        f"    pathlib.Path({str(listening)!r}).touch()\n"
+        "    os._exit(0)\n"
+        "info={'pid':os.getpid(), 'port':sock.getsockname()[1]}\n"
+        f"pathlib.Path({str(info_file)!r}).write_text(json.dumps(info))\n"
+        f"os.execv({display!r}, [{display!r}, *sys.argv[1:]])\n"
+    )
+    wrapper.chmod(0o700)
+    monkeypatch.setenv("EDISON_CONTENT_BROWSER_ENABLED", "1")
+    monkeypatch.setenv("EDISON_CONTENT_X11VNC", str(wrapper))
+    browser = ServerBrowser(start_url="about:blank")
+    try:
+        browser.start(tmp_path / "profile")
+        assert_private_native_listeners(browser)
+        info = json.loads(info_file.read_text())
+        # The real x11vnc process inherits a bound, non-listening TCP socket.
+        # A fork sharing that same kernel socket starts listening only now.
+        # This exercises live proc ownership without mocking process/socket data.
+        trigger.touch()
+        deadline = time.monotonic() + 3
+        while not listening.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert listening.exists()
+        if detection == "idle":
+            # No browser request may be needed to retire an exposed idle desktop.
+            browser.process.wait(timeout=5)
+            assert not browser.alive
+            with socket.socket() as check:
+                check.settimeout(1)
+                assert check.connect_ex(("127.0.0.1", info["port"])) != 0
+        else:
+            with pytest.raises(ContentSessionError) as failure:
+                browser.command("screen", {})
+            assert failure.value.kind == "maintenance"
+        browser.close()
+        assert not Path("/proc", str(info["pid"])).exists()
+        with socket.socket() as check:
+            check.settimeout(1)
+            assert check.connect_ex(("127.0.0.1", info["port"])) != 0
+    finally:
+        browser.close()
