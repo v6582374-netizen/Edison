@@ -12,8 +12,15 @@ def test_web_content_handoff_reports_login_pending(tmp_path, monkeypatch):
     monkeypatch.setenv("EDISON_CONTENT_SESSION_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("EDISON_CREDENTIAL_FILE", str(tmp_path / "credentials.json"))
     monkeypatch.setenv("COWORKER_API_TOKEN", "content-test")
-    monkeypatch.setattr(ServerBrowser, "start", lambda self, profile: None)
-    monkeypatch.setattr(ServerBrowser, "close", lambda self: None)
+    monkeypatch.setattr(
+        ServerBrowser, "start", lambda self, profile: setattr(self, "fixture_running", True)
+    )
+    monkeypatch.setattr(
+        ServerBrowser, "close", lambda self: setattr(self, "fixture_running", False)
+    )
+    monkeypatch.setattr(
+        ServerBrowser, "alive", property(lambda self: getattr(self, "fixture_running", False))
+    )
 
     def incomplete(self):
         raise ContentSessionError("user", "请在 YouTube 页面完成登录。")

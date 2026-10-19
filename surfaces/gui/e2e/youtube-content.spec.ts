@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-test('server content login requires captions and survives closed browser, new workers and host restart', async ({ page, request }) => {
+test('server content login requires captions and survives closed browser, new workers and host restart', async ({ page, request, context, browserName }) => {
   test.setTimeout(120000);
   const root = await mkdtemp(join(tmpdir(), 'edison-content-'));
   let backend: ChildProcess;
@@ -59,6 +59,12 @@ test('server content login requires captions and survives closed browser, new wo
     await expect(content.getByRole('button',{name:'完成登录并检查字幕'})).toBeEnabled({timeout:10000});
     await expect(content.getByRole('status')).toHaveText('需要完成 YouTube 登录');
     await content.getByAltText('服务器登录页面').click();
+    if (browserName === 'chromium') {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.evaluate(() => navigator.clipboard.writeText('isolated-paste-example'));
+      await content.getByRole('application').press('ControlOrMeta+V');
+      await expect.poll(async () => { try {return await readFile(join(root, 'browser-input'),'utf8');} catch {return '';} }).toBe('isolated-paste-example');
+    }
     await writeFile(join(root,'caption-mode'),'empty');
     await content.getByRole('button',{name:'完成登录并检查字幕'}).click();
     await expect(content.getByRole('button',{name:'完成登录并检查字幕'})).toBeEnabled({timeout:10000});

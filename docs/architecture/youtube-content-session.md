@@ -124,3 +124,13 @@ The headed Linux deployment, natural Cookie rotation, service-account production
 permissions, whole-host crash/reboot, real busy resource coexistence, reading P95
 and 14-day trial remain unverified. Existing historical prototype success does
 not fill those gaps or establish acceptance of this fresh managed profile.
+
+To run the optional real-browser protocol coverage, install the `browser` extra
+in the test interpreter, then run `python -m playwright install chromium` (or set
+`EDISON_CONTENT_CHROMIUM` to an installed executable) before
+`PYTHONPATH=src:. python -m pytest tests/test_session_browser.py`. If the extra or
+browser executable is absent, only that real-browser test reports **skipped**;
+pipe-timeout and process-group tests still run. A skip is missing evidence, not
+a browser acceptance result. The Web E2E verifies native keyboard clipboard paste
+in Chromium; WebKit runs the other content-session scenarios without claiming
+clipboard coverage.

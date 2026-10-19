@@ -149,9 +149,20 @@ class ContentSession:
                 "idle_closes_at": self._last_input + 900 if self._running else None,
             }
 
-    def open(self):
+    @contextmanager
+    def _control(self):
+        """Publish browser/control failures before releasing ownership coordination."""
         with self._lock:
-            self._claim()
+            try:
+                self._claim()
+                yield
+            except (ContentSessionError, OSError) as error:
+                safe = content_failure(error)
+                self.record_failure(safe)
+                raise safe from None
+
+    def open(self):
+        with self._control():
             if not self._running:
                 if self._browser is None:
                     from youtube_strataread.workbench.session_browser import ServerBrowser
@@ -163,8 +174,7 @@ class ContentSession:
             return self.status()
 
     def browser_command(self, command, arguments=None):
-        with self._lock:
-            self._claim()
+        with self._control():
             if not self._running:
                 raise ContentSessionError("user", "服务器浏览器已关闭，请重新打开。")
             result = self._browser.command(command, arguments or {})
@@ -178,7 +188,7 @@ class ContentSession:
                 self.close_browser()
 
     def close_browser(self):
-        with self._lock:
+        with self._control():
             if self._running:
                 self._browser.close()
                 self._running = False
@@ -205,27 +215,39 @@ class ContentSession:
                 )
                 self._verified = False
                 self._save()
-            except ContentSessionError as error:
-                self.record_failure(error)
-                raise
+            except (ContentSessionError, OSError) as error:
+                safe = content_failure(error)
+                self.record_failure(safe)
+                raise safe from None
         return self.verify(video_id, fetch=fetch)
 
     def verify(self, video_id, *, fetch):
+        try:
+            self.acquire(video_id, fetch=fetch)
+        except Exception as error:
+            raise content_failure(error) from None
+        return self.status()
+
+    def acquire(self, video_id, *, fetch):
+        """One result-publication boundary for Web checks and queued captions.
+
+        Keep original typed errors for the scheduler, while recording only safe
+        messages. Both success and failure publication check the generation under
+        the same lock as their state write; callers must not publish them again.
+        """
         if not isinstance(video_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
             raise ContentSessionError("unknown", "请输入有效的 11 位字幕检查视频 ID。")
-        lease = None
+        with self._lock:
+            self._claim()
+            lease = Snapshot(self.root / "current.cookies", self._state["generation"])
         try:
             with self.snapshot() as lease:
                 result = fetch(f"https://www.youtube.com/watch?v={video_id}", lease.path)
                 self.accept(lease, result, video_id)
+                return result
         except Exception as error:
-            if lease is not None:
-                with self._lock:
-                    self.assert_current(lease)
-            safe = content_failure(error)
-            self.record_failure(safe)
-            raise safe from None
-        return self.status()
+            self.record_failure(content_failure(error), lease=lease)
+            raise
 
     @contextmanager
     def snapshot(self):
@@ -266,8 +288,10 @@ class ContentSession:
         if self._retired or lease.generation != self._state.get("generation"):
             raise ContentSessionError("invalidated", "内容会话已更新或断开；旧请求结果已丢弃。")
 
-    def record_failure(self, error):
+    def record_failure(self, error, *, lease=None):
         with self._lock:
+            if lease is not None:
+                self.assert_current(lease)
             if self._retired or error.kind == "invalidated":
                 return
             self._verified = False

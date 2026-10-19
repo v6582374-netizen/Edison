@@ -156,3 +156,53 @@ def test_old_failure_cannot_overwrite_new_verified_session(tmp_path):
             stale.result()
     assert session.status()["state"] == "available"
     session.shutdown()
+
+
+def test_failure_publication_checks_generation_atomically(tmp_path):
+    browser = Browser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / "session", browser=browser)
+    session.open()
+    result = SubtitleResult("abcdefghijk", "T", "en", False, SRT)
+    session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+    with session.snapshot() as old:
+        session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+        with pytest.raises(ContentSessionError, match="旧请求"):
+            session.record_failure(ContentSessionError("user", "Old challenge"), lease=old)
+    assert session.status()["state"] == "available"
+    session.shutdown()
+
+
+def test_new_verification_wins_while_old_failure_waits_at_publication_boundary(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    ready, release = threading.Event(), threading.Event()
+
+    class DelayedPublication(ContentSession):
+        # Instrument the public concurrency boundary, not storage or private state.
+        def record_failure(self, error, **kwargs):
+            if str(error) == "delayed external failure":
+                ready.set()
+                assert release.wait(5)
+            return super().record_failure(error, **kwargs)
+
+    browser = Browser()
+    browser.handoff = True
+    session = DelayedPublication(tmp_path / "session", browser=browser)
+    session.open()
+    result = SubtitleResult("abcdefghijk", "T", "en", False, SRT)
+    session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+
+    def failed_fetch(*args):
+        raise ContentSessionError("network", "delayed external failure")
+
+    with ThreadPoolExecutor() as pool:
+        old = pool.submit(session.verify, "abcdefghijk", fetch=failed_fetch)
+        assert ready.wait(5)
+        session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+        release.set()
+        with pytest.raises(ContentSessionError, match="旧请求"):
+            old.result()
+    assert session.status()["state"] == "available"
+    session.shutdown()

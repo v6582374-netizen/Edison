@@ -10,6 +10,17 @@ from youtube_strataread.workbench.session_browser import ServerBrowser
 
 
 def test_real_browser_remote_screen_input_and_profile_survive_close(tmp_path, monkeypatch):
+    playwright = pytest.importorskip(
+        "playwright.sync_api", reason="Install the browser extra for real Chromium coverage"
+    )
+    from pathlib import Path
+
+    with playwright.sync_playwright() as installed:
+        executable = os.environ.get("EDISON_CONTENT_CHROMIUM") or installed.chromium.executable_path
+        if not Path(executable).is_file():
+            pytest.skip(
+                "Real Chromium missing: python -m playwright install chromium; this is not browser acceptance"
+            )
     monkeypatch.setenv("EDISON_CONTENT_BROWSER_ENABLED", "1")
     # Explicit local page is a protocol test, never a content-login proof.
     page = tmp_path / "page.html"
@@ -67,3 +78,31 @@ def test_close_kills_orphaned_descendants_even_when_driver_already_exited(tmp_pa
     finally:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
+
+
+def test_timed_out_transport_cannot_return_a_previous_commands_response(tmp_path):
+    import subprocess
+    import sys
+
+    browser = ServerBrowser(command_timeout=0.05)
+    worker = tmp_path / "delayed.py"
+    worker.write_text("""import json,sys,time
+for line in sys.stdin:
+    command=json.loads(line)['command']
+    time.sleep(.2)
+    print(json.dumps({'ok':True,'result':{'command':command}}),flush=True)
+""")
+    browser.process = subprocess.Popen(
+        [sys.executable, str(worker)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        with pytest.raises(ContentSessionError, match="超时"):
+            browser.command("screen", {})
+        with pytest.raises(ContentSessionError, match="退出"):
+            browser.command("snapshot", {})
+    finally:
+        browser.close()
