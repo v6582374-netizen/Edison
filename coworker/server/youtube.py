@@ -439,16 +439,22 @@ class CapabilityRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+def start_youtube(app: FastAPI, manager: Any) -> YouTubeWorkbench:
+    """Start the one host queue independently of a browser access session."""
+    with app.state.youtube_creation_lock:
+        if app.state.youtube is None:
+            app.state.youtube = YouTubeWorkbench(manager)
+        return app.state.youtube
+
+
 def attach_youtube(app: FastAPI, manager: Any) -> None:
     app.state.youtube = None
-    creation_lock = threading.Lock()
+    app.state.youtube_creation_lock = threading.Lock()
 
     @app.post("/v1/youtube/capability")
     def capability(request: CapabilityRequest) -> dict[str, Any]:
-        with creation_lock:
-            if app.state.youtube is None:
-                try:
-                    app.state.youtube = YouTubeWorkbench(manager)
-                except ConnectionError as error:
-                    return {"ok": False, "error": str(error)}
-        return app.state.youtube.dispatch(request.capability, request.arguments)
+        try:
+            workbench = start_youtube(app, manager)
+        except ConnectionError as error:
+            return {"ok": False, "error": str(error)}
+        return workbench.dispatch(request.capability, request.arguments)
