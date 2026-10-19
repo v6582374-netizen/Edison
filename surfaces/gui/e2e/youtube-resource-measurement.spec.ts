@@ -4,11 +4,10 @@ import { appendFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from '@playwright/test';
 
-test('A-B-B-A native maintenance and reading under the same real preparation load', async ({page,request}) => {
+test('A-B-B-A native maintenance and reading under the same real preparation load', async ({page}) => {
   const server=process.env.EDISON_RESOURCE_MEASUREMENT_URL;
   test.skip(!server, 'Requires explicitly provisioned synthetic Linux fixture');
   test.setTimeout(1200000);
-  const headers={'X-OpenWorker-Token':'content-e2e'};
   const output=process.env.EDISON_RESOURCE_MEASUREMENT_OUTPUT||'/tmp/edison-resource-measurement.json';
   const runId=randomUUID();
   await writeFile(output,JSON.stringify({runId,complete:false,phase:'setup',blocks:[]},null,2));
@@ -21,17 +20,66 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
     journalWrites.push(pending);return pending;
   };
   const failed=(req:Request,status?:number)=>{
-    if(req.url()!==server!+'/v1/youtube/capability')return;
-    const failure={phase,sample,capability:req.method()==='POST'?req.postDataJSON()?.capability:'preflight',status,error:req.failure()?.errorText};
+    if(![server!+'/v1/youtube/capability',server!+'/_measurement/native'].includes(req.url()))return;
+    const payload=req.method()==='POST'?req.postDataJSON():null;
+    const failure={phase,sample,capability:payload?.capability,operation:payload?.operation,method:req.method(),status,error:req.failure()?.errorText};
     networkFailures.push(failure);void record({kind:'network_failure',...failure});
   };
   const requestFailed=(req:Request)=>failed(req);
   const responseReceived=(response:Response)=>{if(response.status()>=400)failed(response.request(),response.status());};
   page.on('requestfailed',requestFailed);
   page.on('response',responseReceived);
-  const call=async(capability:string,args={})=>{const payload=await(await request.post(server!+'/v1/youtube/capability',{headers,data:{capability,arguments:args}})).json();expect(payload.ok,payload.error).toBe(true);return payload.result;};
+  const post=async(path:string,data:Record<string,unknown>)=>{
+    try {
+      return await page.evaluate(async({url,data})=>{
+        const started=performance.now();
+        const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-OpenWorker-Token':'content-e2e'},body:JSON.stringify(data)});
+        if(!response.ok)throw new Error(`Measurement HTTP ${response.status}`);
+        let value=await response.json();
+        const networkMs=performance.now()-started;
+        let decodeMs=0;
+        if(data.operation==='screen'){
+          if(typeof value.image!=='string'||!value.image)throw new Error('Native screen image missing');
+          const image=new Image();
+          const decodeStarted=performance.now();
+          try {
+            image.src='data:image/png;base64,'+value.image;await image.decode();
+            if(image.naturalWidth!==value.width||image.naturalHeight!==value.height)throw new Error('Native screen dimensions mismatch');
+            value={width:value.width,height:value.height,encodedCharacters:value.image.length,pngBytes:atob(value.image).length};
+          } finally {image.src='';}
+          decodeMs=performance.now()-decodeStarted;
+        }
+        return {value,networkMs,decodeMs,totalMs:performance.now()-started};
+      },{url:server!+path,data});
+    } catch(error) {
+      await record({kind:'http_failure',capability:data.capability,operation:data.operation,error:String(error).split('\n')[0]});
+      throw error;
+    }
+  };
+  const call=async(capability:string,args={})=>{const {value}=await post('/v1/youtube/capability',{capability,arguments:args});expect(value.ok,value.error).toBe(true);return value.result;};
   let nativeTouched=false;
-  const native=async(operation:string)=>{nativeTouched=true;const response=await request.post(server!+'/_measurement/native',{headers,data:{operation}});expect(response.ok()).toBe(true);return response.json();};
+  let previousScreenStart:number|undefined;
+  const nativeCalls:Array<Record<string,unknown>>=[];
+  const native=async(operation:string)=>{
+    nativeTouched=true;
+    const started=Date.now();
+    const event:Record<string,unknown>={at:started,phase,sample,operation};
+    if(operation==='open')previousScreenStart=undefined;
+    if(operation==='screen'){
+      event.startIntervalMs=previousScreenStart===undefined?null:started-previousScreenStart;
+      previousScreenStart=started;
+    }
+    try {
+      const response=await post('/_measurement/native',{operation});
+      Object.assign(event,{ok:true,networkMs:response.networkMs,decodeMs:response.decodeMs,totalMs:response.totalMs});
+      if(operation==='screen')Object.assign(event,response.value);
+      return response.value;
+    } catch(error) {
+      Object.assign(event,{ok:false,error:String(error).split('\n')[0]});throw error;
+    } finally {
+      event.elapsedMs=Date.now()-started;nativeCalls.push(event);await record({kind:'native_operation',...event});
+    }
+  };
   const blocks: Array<Record<string,unknown>>=[];
   let screenshots: ReturnType<typeof setInterval>|undefined;
   let screenPoll: Promise<void>|undefined;
@@ -48,6 +96,7 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
   // Browser-native transport includes the real API token and CORS path. It
   // bypasses only the generic UI fixture route, with no Node HTTP forwarding.
   await page.route('**/v1/youtube/capability',route=>route.continue());
+  await page.route('**/_measurement/native',route=>route.continue());
   await page.addInitScript(({server})=>{
     Object.assign(globalThis,{__COWORKER_HTTP__:server,__COWORKER_WS__:server.replace(/^http/,'ws'),__COWORKER_API_TOKEN__:'content-e2e'});
     localStorage.setItem('openworker.lang','zh');
@@ -124,7 +173,7 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
       page.off('request',observer);
       const after={activity:await call('activity.snapshot'),native:await native('status'),load:await call('library.inspect',{video_id:'load0000001'})};
       Object.assign(current,{documentRequests,after,screenFailure,elapsedMs:Date.now()-started,complete:true});
-      await writeFile(output,JSON.stringify({runId,complete:false,transport:'browser-direct',blocks,networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
+      await writeFile(output,JSON.stringify({runId,complete:false,transport:'browser-direct-all-http-v3',blocks,nativeCalls,networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
       // React's development StrictMode can issue two effect reads per mount;
       // each opening above must still perform a fresh request. Report the count.
       expect(documentRequests).toBeGreaterThanOrEqual(60);
@@ -148,13 +197,14 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
     await cleanup(async()=>screenPoll);
     if(nativeTouched)await cleanup(()=>native('close'));
     await cleanup(()=>page.unroute('**/v1/youtube/capability'));
+    await cleanup(()=>page.unroute('**/_measurement/native'));
     page.off('requestfailed',requestFailed);page.off('response',responseReceived);
     await cleanup(()=>Promise.all(journalWrites));
     const complete=!primaryError && !cleanupErrors.length && !networkFailures.length && !loadErrors.length && !!summary;
     try {
       await writeFile(output,JSON.stringify({runId,complete,failure:primaryError?String(primaryError).split('\n')[0]:undefined,
-        phase,sample,cleanupErrors,transport:'browser-direct',blocks,summary:complete?summary:undefined,
-        networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
+        phase,sample,cleanupErrors,transport:'browser-direct-all-http-v3',blocks,summary:complete?summary:undefined,
+        nativeCalls,networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
     } catch(error) {
       // The early incomplete marker remains; preserve the initiating failure.
       if(!primaryError)primaryError=error;
