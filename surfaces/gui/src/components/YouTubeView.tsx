@@ -7,6 +7,7 @@ import { NoticeStack } from "./NoticeStack";
 import { ActivityPage } from "./youtube/ActivityPage";
 import { ProgressPage } from "./youtube/ProgressPage";
 import { useModalInteraction, type ModalInput } from "./ModalSurface";
+import { OfficialAuthorization } from "./youtube/OfficialAuthorization";
 import { Dialog } from "./youtube/Dialog";
 import { DocumentViews, ChannelAvatar } from "./youtube/DocumentViews";
 import {
@@ -864,6 +865,7 @@ export function YouTubeView({
           )}
         </>)}
         {panel === "connection" && (<>
+          {connection && <OfficialAuthorization connection={connection} onChange={value => { setConnection(value); void preferences(); }} />}
           {panelLoading ? (
             <p>{yt("正在检查连接状态…")}</p>
           ) : connectionError || !connection ? (

@@ -1,0 +1,33 @@
+# Reference only: retain the deployed canonical library and credential paths.
+# Never install this over an existing service without the controlled-cutover checks.
+[Unit]
+Description=Edison self-hosted workspace
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=edison
+Group=edison
+WorkingDirectory=/srv/edison/app/src-tree
+EnvironmentFile=/etc/edison.env
+# Keep these paths stable across release symlink changes. Existing installs must
+# use their CURRENT canonical paths, not copy these example values blindly.
+Environment=COWORKER_STATE_DIR=/srv/edison/state
+Environment=YOUTUBE_WORKBENCH_WORKSPACE=/srv/edison/state/youtube
+Environment=EDISON_CREDENTIAL_FILE=/srv/edison/state/credentials/youtube.json
+ExecStart=/srv/edison/app/venv/bin/openworker-server --host 127.0.0.1 --port 8765
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/edison/state
+Restart=on-failure
+# A manager restart must never overlap two OAuth owners; the connection lease
+# also rejects a second host sharing this canonical library.
+KillMode=control-group
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=multi-user.target

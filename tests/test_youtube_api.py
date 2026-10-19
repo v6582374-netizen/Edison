@@ -79,3 +79,13 @@ def test_service_gate_honors_http_date_retry_after(tmp_path, monkeypatch):
     with pytest.raises(YouTubeAPIError):
         api.get('videos', {}, 'secret')
     assert api.gate()['retry_at'] == clock + 3600
+
+
+@pytest.mark.parametrize(('reason', 'kind'), [('insufficientPermissions', 'permission'), ('accessNotConfigured', 'configuration')])
+def test_official_permission_and_configuration_are_not_account_challenges(tmp_path, monkeypatch, reason, kind):
+    def fail(request, timeout):
+        raise HTTPError(request.full_url, 403, 'denied', {}, BytesIO(json.dumps({'error': {'errors': [{'reason': reason}]}}).encode()))
+    monkeypatch.setattr(youtube_api, 'urlopen', fail)
+    with pytest.raises(YouTubeAPIError) as error:
+        YouTubeDataAPI(LocalWorkspace.open(tmp_path)).get('subscriptions', {}, 'secret')
+    assert error.value.kind == kind

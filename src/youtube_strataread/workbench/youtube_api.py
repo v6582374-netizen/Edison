@@ -29,6 +29,9 @@ MAX_PAGE_ITEMS = 50
 _GATE = 'youtube_data_api_gate'
 _PACIFIC = ZoneInfo('America/Los_Angeles')
 _MESSAGES = {
+    'permission': 'Google 授权缺少所需权限，或此账号尚未启用 YouTube；请检查权限。',
+    'configuration': 'Google OAuth 项目或 YouTube API 配置不可用，请检查服务配置。',
+    'network': '无法连接 YouTube 官方 API，稍后重试。',
     'authorization': 'YouTube 授权失效，请重新连接。',
     'quota': 'YouTube 项目额度已用尽，等待配额重置。实际余额由 Google 管理。',
     'budget': '本机 YouTube API 日预算已用尽，等待下一预算日。',
@@ -90,15 +93,17 @@ class YouTubeDataAPI:
                 if self.workspace:
                     self.workspace.set_meta(_GATE, '{}')
 
-    def ensure_available(self) -> None:
+    def ensure_available(self, *, grant_check: bool = False) -> None:
         gate = self.gate()
+        if grant_check and gate.get("kind") == "authorization":
+            return
         if gate and (gate.get('retry_at') is None or gate['retry_at'] > time.time()):
             if gate['kind'] == 'authorization':
                 raise AuthorizationRequired(_MESSAGES['authorization'])
             raise YouTubeAPIError(gate['kind'], gate.get('retry_at'))
 
-    def _reserve(self, endpoint: str) -> None:
-        self.ensure_available()
+    def _reserve(self, endpoint: str, *, grant_check: bool = False) -> None:
+        self.ensure_available(grant_check=grant_check)
         if not self.workspace:
             return
         day, reset_at = self._day()
@@ -114,11 +119,11 @@ class YouTubeDataAPI:
         if used >= self.daily_budget:
             raise YouTubeAPIError('budget', reset_at)
 
-    def get(self, endpoint: str, parameters: dict[str, str], access_token: str) -> dict[str, Any]:
+    def get(self, endpoint: str, parameters: dict[str, str], access_token: str, *, grant_check: bool = False) -> dict[str, Any]:
         if endpoint not in {'subscriptions', 'channels', 'playlistItems', 'videos'}:
             raise ValueError('Unsupported YouTube Data API resource')
         with self._lock:
-            self._reserve(endpoint)
+            self._reserve(endpoint, grant_check=grant_check)
             request = Request('https://www.googleapis.com/youtube/v3/' + endpoint + '?' + urlencode(parameters),
                               headers={'Authorization': 'Bearer ' + access_token})
             try:
@@ -132,11 +137,15 @@ class YouTubeDataAPI:
                     reasons = {str(item.get('reason')) for item in body.get('error', {}).get('errors', []) if isinstance(item, dict)}
                 except (ValueError, TypeError, AttributeError, OSError):
                     reasons = set()
-                if error.code == 401 or reasons & {'authError', 'insufficientPermissions', 'youtubeSignupRequired'}:
+                if error.code == 401 or reasons & {'authError'}:
                     raise AuthorizationRequired(_MESSAGES['authorization']) from None
+                if reasons & {'insufficientPermissions', 'youtubeSignupRequired'}:
+                    raise YouTubeAPIError('permission') from None
+                if reasons & {'accessNotConfigured'}:
+                    raise YouTubeAPIError('configuration') from None
                 if reasons & {'quotaExceeded', 'dailyLimitExceeded'}:
                     kind, retry_at = 'quota', self._day()[1]
-                elif error.code == 429 or error.code >= 500 or reasons & {'rateLimitExceeded', 'userRateLimitExceeded', 'accessNotConfigured'}:
+                elif error.code == 429 or error.code >= 500 or reasons & {'rateLimitExceeded', 'userRateLimitExceeded'}:
                     kind, retry_at = 'service', time.time() + 60
                     value = error.headers.get('Retry-After', '')
                     try:
@@ -152,10 +161,11 @@ class YouTubeDataAPI:
                     raise YouTubeAPIError('channel') from None
                 self.block(kind, retry_at)
                 raise YouTubeAPIError(kind, retry_at) from None
-            except (OSError, ValueError):
+            except (OSError, ValueError) as error:
+                kind = 'network' if isinstance(error, OSError) else 'service'
                 retry_at = time.time() + 60
-                self.block('service', retry_at)
-                raise YouTubeAPIError('service', retry_at) from None
+                self.block(kind, retry_at)
+                raise YouTubeAPIError(kind, retry_at) from None
             # A successful post-deadline request ends a temporary global failure.
             self._gate = {}
             if self.workspace:
