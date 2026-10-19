@@ -28,6 +28,7 @@ from youtube_strataread.workbench.connection import (
     ConnectionService,
     GoogleOAuthGateway,
 )
+from youtube_strataread.workbench.cutover import CutoverBlocked, CutoverHold
 from youtube_strataread.workbench.discovery import SubscriptionDiscovery, YouTubeUploadsAPI
 from youtube_strataread.workbench.keychain import NativeKeychainVault
 from youtube_strataread.workbench.library import (
@@ -122,6 +123,7 @@ class YouTubeWorkbench:
             workspace=self.workspace, vault=NativeKeychainVault(namespace=str(root.resolve())), oauth=GoogleOAuthGateway()
         )
         self.connection.claim_server_ownership()
+        self.cutover = CutoverHold(self.workspace)
         from youtube_strataread.workbench.content_session import ContentSession
         self.managed_content = bool(os.environ.get("EDISON_CONTENT_SESSION_DIR"))
         content_root = Path(os.environ.get(
@@ -152,6 +154,9 @@ class YouTubeWorkbench:
         self.library = LibraryService(workspace=self.workspace, preparation=self.preparation)
         self.batch = AutomaticBatch(preparation=self.preparation)
         self.stop = threading.Event()
+        if self.cutover.held:
+            self.stop.set()
+        self.maintenance_stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="edison-youtube", daemon=True)
         self.discovery_lock = threading.Lock()
         self.discovery_error: str | None = None
@@ -171,6 +176,16 @@ class YouTubeWorkbench:
         self.subscription_thread = threading.Thread(target=self._sync_subscriptions,
                                                     name="edison-subscriptions", daemon=True)
         self.subscription_thread.start()
+        self.maintenance_thread = threading.Thread(target=self._watch_cutover, name="edison-cutover", daemon=True)
+        self.maintenance_thread.start()
+
+    def _workers(self):
+        return (self.thread, self.heartbeat_thread, self.subscription_thread, self.discovery_thread)
+
+    def _watch_cutover(self):
+        while not self.maintenance_stop.wait(.2):
+            if self.cutover.held:
+                self.cutover.observe_drain(self._workers(), self.content_session.close_browser)
 
     def _sync_subscriptions(self) -> None:
         self.connection.watch_subscriptions(self.stop, now=self.discovery.now, wake=self.refresh_requested)
@@ -180,7 +195,11 @@ class YouTubeWorkbench:
         # may leave the current stage unchanged while this process is responsive.
         while not self.stop.is_set() and self.thread.is_alive():
             self.heartbeat_at = time.time()
-            self.content_session.tick()
+            try:
+                with self.cutover.work():
+                    self.content_session.tick()
+            except CutoverBlocked:
+                return
             self.stop.wait(2)
 
     def _run(self) -> None:
@@ -201,19 +220,24 @@ class YouTubeWorkbench:
     def prepare_one(self) -> bool:
         if not self.manager.get_settings().get("model_ready"):
             return False
-        return self.batch.run_one()
+        try:
+            with self.cutover.work():
+                return self.batch.run_one()
+        except CutoverBlocked:
+            return False
 
     def close(self) -> None:
-        self.content_session.shutdown()
-        self.preparation.stop()
-        self.discovery.stop()
+        self.cutover.seal()
         self.stop.set()
-        self.thread.join(timeout=1)
-        self.heartbeat_thread.join(timeout=1)
-        self.subscription_thread.join(timeout=1)
-        self.discovery_thread.join(timeout=1)
-        if not any(thread.is_alive() for thread in (self.thread, self.heartbeat_thread, self.subscription_thread, self.discovery_thread)):
-            self.connection.release_server_ownership()
+        self.maintenance_stop.set()
+        self.maintenance_thread.join()
+        # Never interrupt an admitted downloader/model call to satisfy a drain.
+        # Returning from the complete work scopes proves results were saved.
+        for worker in self._workers():
+            worker.join()
+        self.cutover.wait_idle()
+        self.content_session.shutdown()
+        self.connection.release_server_ownership()
 
     def ensure_summary(self, video_id: str) -> str:
         with self.summary_locks_guard:
@@ -261,6 +285,33 @@ class YouTubeWorkbench:
             return self.workspace.save_summary(video_id, _bounded_summary(draft))
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability.startswith("cutover."):
+            if capability == "cutover.begin":
+                return {"ok": True, "result": self.cutover.begin(self.stop)}
+            if capability == "cutover.abort":
+                return {"ok": True, "result": self.cutover.abort()}
+            if capability == "cutover.status":
+                return {"ok": True, "result": self.cutover.status()}
+            return {"ok": False, "error": "不支持的切换操作。"}
+        # Reads and the person's newer withdrawals/permission choices remain
+        # available. Everything that can start work or write credentials joins
+        # the same admission lease, including legacy endpoints and summaries.
+        reads = {"connection.status", "session_cookies.status",
+                 "manual.confirm", "collection.preferences", "collection.subscription_sources",
+                 "translation.settings", "generation.prompt", "activity.snapshot", "activity.list",
+                 "library.list", "library.snapshot", "library.inspect", "library.search", "documents.get", "diagnostics.snapshot",
+                 "documents.open", "documents.open_translation", "sources.open"}
+        withdrawal = {"content_session.status", "content_session.close", "connection.disconnect", "activity.cancel", "activity.drain_pause",
+                      "activity.resume", "collection.set_exclusions", "library.set_reading_state", "library.delete"}
+        try:
+            if capability in reads:
+                return self._dispatch(capability, arguments)
+            with self.cutover.work(withdrawal=capability in withdrawal):
+                return self._dispatch(capability, arguments)
+        except CutoverBlocked as error:
+            return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+
+    def _dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if self.managed_content and capability in {
             "session_cookies.replace", "session_cookies.test",
             "connection.migrate_credentials", "connection.configure", "connection.authorize",
@@ -296,7 +347,8 @@ class YouTubeWorkbench:
                         except ValueError as error:
                             raise ContentSessionError("unknown", str(error)) from None
                     sequence = self.workspace.youtube_requests.snapshot().get("failure_sequence", 0)
-                    fetch = lambda url, path: captions.fetch_snapshot(url, path)
+                    def fetch(url, path):
+                        return captions.fetch_snapshot(url, path)
                     if operation == "confirm":
                         result = self.content_session.confirm(video_id, same_account=arguments.get("same_account"), fetch=fetch)
                     else:
@@ -506,6 +558,7 @@ class YouTubeWorkbench:
         if response.get("ok") and capability == "activity.snapshot":
             response["result"].update(
                 {
+                    "cutover": self.cutover.status(),
                     "resources": self.resources.status() if self.resources else None,
                     "runtime": {
                         "heartbeat_at": self.heartbeat_at,

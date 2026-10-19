@@ -111,7 +111,7 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
   const cooldownUntil = activity?.youtube_requests?.cooldown_until || 0;
   const cooling = cooldownUntil * 1000 > now;
   const stage = current?.preparation_stage || current?.preparation_state;
-  const title = stale ? yt("正在重新连接") : !activity?.model_ready ? yt("等待模型设置")
+  const title = stale ? yt("正在重新连接") : activity?.cutover?.held && !active ? yt("YouTube 切换暂停") : !activity?.model_ready ? yt("等待模型设置")
     : active ? labels[stage || ""] || yt("正在处理") : activity?.drain_paused ? yt("更新已暂停")
     : cooling ? yt("YouTube 冷却中")
     : activity?.runtime?.discovering ? yt("正在检查订阅") : activity?.queued ? yt("等待处理")
@@ -132,12 +132,12 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
   return <section className="yp-progress ui-surface-hierarchy--ma" aria-label={yt("处理进度")}>
     <div className="yp-progress-heading">
       <span className={`yp-heartbeat ${live ? "is-live" : ""}`} role="status">
-        {stale ? yt("连接中断 · 正在重连") : live ? yt("后台在线") : yt("后台心跳未确认")}
+        {stale ? yt("连接中断 · 正在重连") : activity?.cutover?.held ? yt("维护中 · 采集暂停") : live ? yt("后台在线") : yt("后台心跳未确认")}
       </span>
     </div>
     <DiscoveryStatus discovery={activity?.discovery} paused={!!activity?.drain_paused} />
     <div className="discovery-stage-strip-layout-ma">
-      <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live)} observedStage={title}
+      <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live && !activity?.cutover?.held)} observedStage={title}
         signalCopy={current ? `${current.title} · ${videoMetadataText(current)}` : ""}
         milestones={milestones} metrics={[
           { label: yt("待处理"), value: activity?.queued ?? "—", note: yt("尚未开始，可以取消") },

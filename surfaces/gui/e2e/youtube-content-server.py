@@ -84,6 +84,8 @@ def response(payload):
 def google(request, timeout=30):
     url = request.full_url
     parsed = urlsplit(url)
+    with (root / 'google-requests.jsonl').open('a') as log:
+        log.write(json.dumps({'path':parsed.path, 'query':parsed.query, 'at':now()})+'\n')
     if parsed.path == '/revoke':
         if (root / 'revoke-fails').exists():
             raise OSError('controlled revocation failure')
@@ -95,15 +97,22 @@ def google(request, timeout=30):
     if endpoint == 'subscriptions':
         if (root / 'hold-subscriptions').exists():
             (root / 'subscriptions-held').touch()
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 60
             while (root / 'hold-subscriptions').exists() and time.monotonic() < deadline:
                 time.sleep(.02)
+        if (root / 'subscription-videos.json').exists():
+            return response({'items':[{'snippet':{'resourceId':{'channelId':'sample-channel'},'title':'Sample'}}]})
         return response({'items':[]})
+    if endpoint == 'channels':
+        return response({'items':[{'id':'sample-channel','contentDetails':{'relatedPlaylists':{'uploads':'sample-uploads'}}}]})
+    if endpoint == 'playlistItems':
+        videos = json.loads((root / 'subscription-videos.json').read_text())
+        return response({'items':[{'contentDetails':{'videoId':video}} for video in videos]})
     if endpoint == 'videos':
-        video = parse_qs(parsed.query)['id'][0]
+        videos = parse_qs(parsed.query)['id'][0].split(',')
         return response({'items':[{'id':video,'snippet':{'title':'Content session sample','channelId':'sample-channel',
             'channelTitle':'Sample','publishedAt':datetime.fromtimestamp(now()-100,timezone.utc).isoformat(),'liveBroadcastContent':'none'},
-            'status':{'privacyStatus':'public','uploadStatus':'processed'},'contentDetails':{'duration':'PT2M'}}]})
+            'status':{'privacyStatus':'public','uploadStatus':'processed'},'contentDetails':{'duration':'PT2M'}} for video in videos]})
     raise AssertionError(endpoint)
 connection.urlopen = youtube_api.urlopen = google
 

@@ -20,6 +20,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from youtube_strataread.workbench.cutover import admitted
 from youtube_strataread.workbench.vault import SecretVault, VaultError
 from youtube_strataread.workbench.workspace import LocalWorkspace
 from youtube_strataread.workbench.youtube_api import (
@@ -308,19 +309,20 @@ class ConnectionService:
 
     @contextmanager
     def _operation(self):
-        # Capture intent before joining serialized network work. Disconnect does
-        # not wait for that work; every publication checks this generation.
-        with self._identity_lock:
-            if self.workspace.meta("youtube_disconnect_local") in {"pending", "failed"}:
-                raise OfficialConnectionError("disconnect_pending", "凭据清理尚未完成，请再次断开后再重新连接。")
-            if self.workspace.meta("youtube_disconnect_google") == "pending":
-                raise OfficialConnectionError("disconnect_pending", "正在撤销 Google 授权，请等待断开完成后再重新连接。")
-            generation = self._generation
-        with self._lock:
-            self._require_active_owner()
-            with self._publication(generation):
-                pass
-            yield generation
+        with admitted(self.workspace):
+            # Capture intent before joining serialized network work. Disconnect does
+            # not wait for that work; every publication checks this generation.
+            with self._identity_lock:
+                if self.workspace.meta("youtube_disconnect_local") in {"pending", "failed"}:
+                    raise OfficialConnectionError("disconnect_pending", "凭据清理尚未完成，请再次断开后再重新连接。")
+                if self.workspace.meta("youtube_disconnect_google") == "pending":
+                    raise OfficialConnectionError("disconnect_pending", "正在撤销 Google 授权，请等待断开完成后再重新连接。")
+                generation = self._generation
+            with self._lock:
+                self._require_active_owner()
+                with self._publication(generation):
+                    pass
+                yield generation
 
     @contextmanager
     def _publication(self, generation):
