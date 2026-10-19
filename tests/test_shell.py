@@ -7,12 +7,13 @@ exit codes, timeout-and-recover, truncation) is identical across both.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
 import pytest
 
-from coworker.permissions import PermissionEngine
+from coworker.permissions import Mode, PermissionEngine
 from coworker.tools import ToolRegistry
 from coworker.tools.shell import LocalExecutor, shell_tools
 
@@ -51,6 +52,81 @@ def test_env_persists_across_calls(executor):
     executor.run(SET_ENV)
     result = executor.run(ECHO_ENV)
     assert "hello_world" in result["output"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Edison shell sandbox is macOS-only")
+def test_shell_cannot_modify_settings_through_alias_or_script(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    target = state / "config.toml"
+    target.write_text("original", encoding="utf-8")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    script = tmp_path / "mutate.py"
+    script.write_text(
+        f"from pathlib import Path\nPath({str(target)!r}).write_text('changed')\n",
+        encoding="utf-8",
+    )
+
+    gate = PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS)
+    executor = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        # These previously passed the full-access gate and reached the state file.
+        commands = (
+            'printf changed > "$COWORKER_STATE_DIR/config.toml"',
+            "printf changed > state/config.toml",
+            "ln -s state alias; printf changed > alias/config.toml",
+            "python3 mutate.py",
+        )
+        for command in commands:
+            assert gate.evaluate("run_shell", {"command": command}, None).allowed
+            assert executor.run(command)["exit_code"] != 0
+            assert target.read_text(encoding="utf-8") == "original"
+
+        task = executor.run_background('printf changed > "$COWORKER_STATE_DIR/config.toml"')
+        assert "task_id" in task
+        for _ in range(50):
+            result = executor.background_output(task["task_id"])
+            if result["status"] == "exited":
+                break
+            time.sleep(0.02)
+        assert result["exit_code"] != 0
+        assert target.read_text(encoding="utf-8") == "original"
+
+        ordinary = tmp_path / "ordinary.txt"
+        assert executor.run(f"printf allowed > {ordinary}")["exit_code"] == 0
+        assert ordinary.read_text(encoding="utf-8") == "allowed"
+    finally:
+        executor.close()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Edison shell sandbox is macOS-only")
+def test_shell_refuses_preexisting_state_file_aliases(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    target = state / "config.toml"
+    target.write_text("original", encoding="utf-8")
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    executor = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        hardlink = tmp_path / "hardlink"
+        os.link(target, hardlink)
+        with pytest.raises(RuntimeError, match="protected state has an alias"):
+            executor.run("printf changed > hardlink")
+        assert target.read_text(encoding="utf-8") == "original"
+        hardlink.unlink()
+
+        target.unlink()
+        outside = tmp_path / "outside"
+        outside.write_text("original", encoding="utf-8")
+        target.symlink_to(outside)
+        with pytest.raises(RuntimeError, match="protected state has an alias"):
+            executor.run("printf changed > outside")
+        assert outside.read_text(encoding="utf-8") == "original"
+        target.unlink()
+
+        assert executor.run("printf allowed > ordinary.txt")["exit_code"] == 0
+    finally:
+        executor.close()
 
 
 def test_managed_bin_dir_is_on_path_from_spawn(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import Response
 
 from ..curriculum import CourseArchive, generate_notes
+from ..curriculum_sync import export_documents, generate_transcript
 
 
 def attach_curriculum(app: FastAPI, manager):
@@ -32,7 +33,13 @@ def attach_curriculum(app: FastAPI, manager):
 
     @app.get("/v1/curriculum/archive")
     def archive():
-        return store.listing()
+        result = store.listing()
+        if result["automation"].get("enabled"):
+            revision = export_documents(store)["revision"]
+            result["backup"]["current_revision"] = revision
+            if result["backup"].get("revision") != revision:
+                result["backup"]["state"] = "pending"
+        return result
 
     @app.get("/v1/curriculum/occurrence")
     def occurrence(course: str, date: str, first: int, last: int):
@@ -68,9 +75,12 @@ def attach_curriculum(app: FastAPI, manager):
     def prepare(rid: str):
         try:
             with slot:
-                generate_notes(store, rid, manager)
+                if store.sync_status("automation").get("perspective") == "transcript":
+                    generate_transcript(store, rid, manager)
+                else:
+                    generate_notes(store, rid, manager)
         except Exception:
-            store.set_state(rid, "failed", "笔记整理未完成，可重试；原始材料已保留")
+            store.set_state(rid, "failed", "整理未完成，可重试；原始材料已保留")
         finally:
             with guard:
                 busy.discard(rid)

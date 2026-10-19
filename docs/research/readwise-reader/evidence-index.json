@@ -1,0 +1,242 @@
+{
+  "date": "2026-10-13",
+  "rea_version": "6.4.0",
+  "reader_desktop_version": "0.1.3293",
+  "package_sha256": "0989350108e9cfe59b2e01960d700858d2c4b54ad1f68f08b01c81808355fa6c",
+  "raw_root": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013",
+  "asset_files_acquired": 210,
+  "source_map_content_files": 1297,
+  "records": [
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/desktop-artifact.json",
+      "bytes": 15676,
+      "sha256": "dfb307adddf86b14074fa64047052b8385e2be02bd744aff59a507d3ae77ecc4",
+      "evidence_id": "ev_a25267c3d395bd9cd51cfedefbe7c99dadc6c8617a419d774338538e14f374e0",
+      "operation": "inspect_artifact",
+      "coverage": null,
+      "limitations_count": 1
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/desktop-plist.json",
+      "bytes": 2807,
+      "sha256": "7bfa507566b6f7311f8c700bfcedbbf6beac0c45fbc13c3bf6ded4d405b31e2e",
+      "evidence_id": "ev_83871003f4cc34c78c9e60507a003fa43b0346b69bd27ffe2182b9822d893f1b",
+      "operation": "inspect_plist",
+      "coverage": null,
+      "limitations_count": 0
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/desktop-macho.json",
+      "bytes": 798779,
+      "sha256": "967f862d6826d17bb21d44b15c3d581c46a90458730ff8bd0efb16e8dfe0473f",
+      "evidence_id": "ev_e7bba7713cae35b71ce6d0ccbef0fe481016a32ebc5e6d92b8d9079051b500f6",
+      "operation": "inspect_macho",
+      "coverage": null,
+      "limitations_count": 2
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/desktop-signature.json",
+      "bytes": 3088,
+      "sha256": "661266fad5a3ca2232e430130fd64a0c57086c2a9ff99d3bf188ff7bd0e58b91",
+      "evidence_id": "ev_7926c6d217ae290282437f44efcf8f409b7216a932b6b56a0b80010e05a7c251",
+      "operation": "inspect_signature",
+      "coverage": null,
+      "limitations_count": 2
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/product-application.json",
+      "bytes": 80327222,
+      "sha256": "bfa08fe67918d2b019a7476e948f5c6f52c13ed238f13b3482f8fe6d61deee37",
+      "evidence_id": "ev_2a9535b2f68a4164c979afaa507358c58706ee6b8e59135257e56d3821e50b97",
+      "operation": "analyze_javascript_application",
+      "coverage": {
+        "status": "partial",
+        "truncated": false,
+        "omitted_count": null,
+        "limits": [
+          {
+            "name": "javascript_analysis_parent_result_budget_bytes",
+            "value": 2016468112,
+            "unit": "bytes"
+          },
+          {
+            "name": "javascript_analysis_semantic_result_budget_bytes",
+            "value": 0,
+            "unit": "bytes"
+          },
+          {
+            "name": "javascript_analysis_worker_heap_limit_bytes",
+            "value": 2172649472,
+            "unit": "bytes"
+          },
+          {
+            "name": "javascript_analysis_worker_timeout_ms",
+            "value": 180000,
+            "unit": "milliseconds"
+          }
+        ]
+      },
+      "limitations_count": 2469
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/application-summary.json",
+      "bytes": 2299591,
+      "sha256": "2dacb3257729b127f870d7bd30124721fd1d4c965a2563b69e226391c799cc80",
+      "evidence_id": "ev_b00e8c373d40760e3723e0329c5284a6f2314fca022c0feb02f20385e5184b99",
+      "operation": "inspect_analysis_view",
+      "coverage": null,
+      "limitations_count": 2480
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/anchors-application.json",
+      "bytes": 12568940,
+      "sha256": "5dbba955adb09ea7a824243ac0fbe0dbff8f629be347825315f432ae27a1cf8f",
+      "evidence_id": "ev_ec1b5a50b89c44f79c848c1e89fcd349963bff2c5a8437bef84d82ca07a78405",
+      "operation": "analyze_javascript_application",
+      "coverage": {
+        "status": "complete",
+        "truncated": false,
+        "omitted_count": 0,
+        "limits": []
+      },
+      "limitations_count": 5
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/library-application.json",
+      "bytes": 13748320,
+      "sha256": "331249bad3eef91701208241f345ad8c2018238b1053448e03db4b374e8c24f1",
+      "evidence_id": "ev_530c6966238dcc7c28f9fab00395a25934a0634014d95c8b7cb0a03646782033",
+      "operation": "analyze_javascript_application",
+      "coverage": {
+        "status": "complete",
+        "truncated": false,
+        "omitted_count": 0,
+        "limits": []
+      },
+      "limitations_count": 5
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/anchors-trace.json",
+      "bytes": 91665,
+      "sha256": "7714c92f128454747a46f0a7ceb22ae6a543079cf7878f9190efc3c9a971eeca",
+      "evidence_id": "ev_598d78e591fbe58674a438055406f14054bb63af3360f2b4b41b507e8b5ed7ca",
+      "operation": "trace_application_feature",
+      "coverage": {
+        "status": "complete",
+        "truncated": false,
+        "omitted_count": 0,
+        "limits": []
+      },
+      "limitations_count": 4
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/library-trace.json",
+      "bytes": 78085,
+      "sha256": "6c0db3392f2ade454a6812f08ffcceb21c9d01e979706139615f86e1993f44ab",
+      "evidence_id": "ev_a4aa7b8306e1738db40719583a5b66f3b9a93ebc60392f57ae0308eb4a801028",
+      "operation": "trace_application_feature",
+      "coverage": {
+        "status": "complete",
+        "truncated": false,
+        "omitted_count": 0,
+        "limits": []
+      },
+      "limitations_count": 4
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/position-probe-capture.json",
+      "bytes": 11458,
+      "sha256": "264caa64c8189e3f9d443606a1dc61697c3e4bf3184cb5020cba35442ceeb324",
+      "evidence_id": "ev_e4c96df0b24a7e17fddf5acbfe189e866a48a1bab787a26cc76b713756482334",
+      "operation": "capture_process_scenario",
+      "coverage": null,
+      "limitations_count": 5
+    }
+  ],
+  "supplemental_files": [
+    "desktop-asset-acquisition.json",
+    "source-map-extraction.json",
+    "reader-position-annotation-findings.md",
+    "reader-ui-observations.md",
+    "edison-integration-findings.md",
+    "epub-building-blocks.md",
+    "position-contract-probe.json",
+    "local-book-test-input.json",
+    "test-export-verification.json"
+  ],
+  "interpretation": "Full-tree relationship coverage partial; focused structure complete within selected files; semantic/dynamic/server behavior remains bounded or unknown. Web UI evidence is separate from desktop build evidence.",
+  "supporting_records": [
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/desktop-asset-acquisition.json",
+      "bytes": 55569,
+      "sha256": "eff012e486fa0b94fbab3b76e3c6a5cb413aad9871fe34a61ec7a9a57600d6cd",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/source-map-extraction.json",
+      "bytes": 653555,
+      "sha256": "c6866ebbe6cc75f2b715446d6a833316ec1a2423a93f407150d159ad28d3d113",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/position-contract-probe.json",
+      "bytes": 3639,
+      "sha256": "09f199528ecfa2f205708d5cde4f39412594c8dd6c3671aa7768751aa1efc304",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/local-book-test-input.json",
+      "bytes": 799,
+      "sha256": "8c9da671f63f3bcab2ea0f7f74c3c37c572d6233e90494a43b3a1b3c7cdb8497",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/runtime-verification-ledger.json",
+      "bytes": 1621,
+      "sha256": "e1bd1f868525e0c40d8f90fac0bbcc2fd4e4a67580592c464e8a9b277e96d51a",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/test-classification-verification.json",
+      "bytes": 1110,
+      "sha256": "0c9c93d5188fd7c77328c4423c13815d60209e5e88265aaefabdd89aeb01881f",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/test-highlight-server-summary.json",
+      "bytes": 461,
+      "sha256": "1f72c2a917b4f5d811bca1aca1c8e2ab1c72293e597fcddad22c79efade2b012",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/test-export-verification.json",
+      "bytes": 306,
+      "sha256": "147e7006cde8668fd834ac64f7301b4cb3d5ce8ee66eb4ee9d6da954c4759fd7",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/reader-position-annotation-findings.md",
+      "bytes": 31041,
+      "sha256": "18ec19a24109d0bb34032d871e4042e0524876f98cbd4dfdd4bfaff2e2b63e3e",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/epub-building-blocks.md",
+      "bytes": 11614,
+      "sha256": "265f332a886115076d82904480ef00c162113ee3f879c592888c4d574a5003d3",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/edison-integration-findings.md",
+      "bytes": 13697,
+      "sha256": "5808d9c1e043b87c90e7446454d1d25b82712d7c80ff5fb06153d3c10b155ada",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    },
+    {
+      "file": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/evidence/edison-integration-source-identities.json",
+      "bytes": 3732,
+      "sha256": "6f59a6cfb7ec5f037bd2b4002a5f5c84ead0b71e7d370f4b15190bd632813d9c",
+      "kind": "local supporting record; not a separate REA Evidence envelope"
+    }
+  ]
+}

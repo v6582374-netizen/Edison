@@ -143,8 +143,10 @@ def _stage_ok(argv: list[str]) -> bool:
         if any(t.startswith(("-i", "--in-place", "-f", "--file")) for t in args):
             return False
         return not any(_SED_WRITE.search(t) for t in args if not t.startswith("-"))
+    # Awk programs can run commands through pipe-to-getline and read arbitrary files
+    # from the program body. Their effects cannot be scoped from positional operands.
     if head in {"awk", "gawk", "mawk", "nawk"}:
-        return not any(">" in t or "system" in t for t in args)
+        return False
     if head == "find":
         return not any(t.startswith(_FIND_BAD) for t in args)
     return False
@@ -174,7 +176,7 @@ _NO_PATH_OPERANDS = {
     "which", "basename", "dirname", "tr", "command", "env",
 }
 # The FIRST non-flag operand is a pattern/program, not a path; the rest are files.
-_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "jq", "awk", "gawk", "mawk", "nawk", "sed"}
+_PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "jq", "sed"}
 # Flags whose VALUE is a path, for the commands that accept them.
 _PATH_VALUE_FLAGS = {"-f", "--file", "--exclude-from", "--include-from"}
 # `head -n 5`, `cut -f 1`, `sed -n 2p`: a bare number is some flag's count, never a file

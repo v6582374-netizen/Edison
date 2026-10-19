@@ -1,0 +1,11 @@
+[Unit]
+Description=Check classroom captions every fifteen minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=30
+Persistent=true
+Unit=edison-classrooms.service
+
+[Install]
+WantedBy=timers.target

@@ -22,9 +22,11 @@ when they exit or via `shell_task_kill`.
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -52,6 +54,32 @@ _NONINTERACTIVE_ENV = {
 }
 
 
+class ShellIsolationUnavailable(RuntimeError):
+    """The host cannot safely expose shell execution to an agent."""
+
+
+def _sandboxed_argv(argv: list[str], state_root: Path) -> list[str]:
+    """Keep every shell child from changing the agent's own authority store."""
+    if sys.platform != "darwin" or not os.access("/usr/bin/sandbox-exec", os.X_OK):
+        raise ShellIsolationUnavailable("shell execution requires the macOS filesystem sandbox")
+    profile = (
+        "(version 1) (allow default) "
+        f"(deny file-write* (subpath {json.dumps(str(state_root))}))"
+    )
+    return ["/usr/bin/sandbox-exec", "-p", profile, *argv]
+
+
+def _assert_no_state_aliases(paths: list[Path]) -> None:
+    """Path rules cannot protect a protected inode through an outside hardlink."""
+    for path in paths:
+        try:
+            mode = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode.st_mode) or mode.st_nlink != 1:
+            raise ShellIsolationUnavailable(f"shell disabled: protected state has an alias: {path}")
+
+
 class Executor(ABC):
     @abstractmethod
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]: ...
@@ -76,7 +104,9 @@ class _BackgroundTask:
     """One detached background command: its own process (not the persistent shell), a
     reader thread draining output into a buffer, and an incremental-read cursor."""
 
-    def __init__(self, task_id: str, command: str, cwd: str, env: dict[str, str]):
+    def __init__(
+        self, task_id: str, command: str, cwd: str, env: dict[str, str], state_root: Path
+    ):
         self.id = task_id
         self.command = command
         if _IS_WINDOWS:
@@ -87,6 +117,7 @@ class _BackgroundTask:
         else:
             argv = ["/bin/bash", "-c", command]
             spawn_kwargs = {"start_new_session": True}
+        argv = _sandboxed_argv(argv, state_root)
         self.proc = subprocess.Popen(
             argv,
             stdin=subprocess.DEVNULL,
@@ -162,6 +193,11 @@ class LocalExecutor(Executor):
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
         self._env = {**os.environ, **_NONINTERACTIVE_ENV, **(env or {})}
+        from ..permissions import protected_paths
+        from ..secrets import state_dir
+
+        self._state_root = state_dir().expanduser().resolve()
+        self._protected_state_paths = [self._state_root / p.name for p in protected_paths()]
         # Managed pinned tools (toolchain.install) land under one stable bin dir; putting
         # it on PATH up front — even before anything is installed there — means a tool the
         # user approves mid-session works in THIS shell immediately, by name, no respawn.
@@ -179,6 +215,7 @@ class LocalExecutor(Executor):
         if a command times out and the shell is hard-closed, the next `run` respawns here
         in the last known `cwd` (in-shell env/vars are lost, but the session continues).
         """
+        _assert_no_state_aliases(self._protected_state_paths)
         if self._is_windows:
             argv = [
                 self._shell_path,
@@ -197,6 +234,7 @@ class LocalExecutor(Executor):
         else:
             argv = [self._shell_path]
             spawn_kwargs = {"start_new_session": True}
+        argv = _sandboxed_argv(argv, self._state_root)
 
         self._proc = subprocess.Popen(
             argv,
@@ -227,6 +265,7 @@ class LocalExecutor(Executor):
             self._queue.put(None)  # EOF sentinel
 
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]:
+        _assert_no_state_aliases(self._protected_state_paths)
         if self._proc.poll() is not None:
             # Shell exited (e.g. hard-closed after a prior command's timeout). Respawn so
             # the session self-heals rather than wedging every future command.
@@ -315,10 +354,11 @@ class LocalExecutor(Executor):
 
     # -- background tasks ---------------------------------------------------------
     def run_background(self, command: str) -> dict[str, Any]:
+        _assert_no_state_aliases(self._protected_state_paths)
         self._bg_counter += 1
         task_id = f"bg-{self._bg_counter}"
         try:
-            task = _BackgroundTask(task_id, command, self.cwd, self._env)
+            task = _BackgroundTask(task_id, command, self.cwd, self._env, self._state_root)
         except OSError as exc:
             return {"error": f"failed to start background task: {exc}"}
         self._bg_tasks[task_id] = task

@@ -32,7 +32,6 @@ ACCEPT = [
     "command -v semgrep",
     "wc -l file.txt | sort",
     "printf 'a: '",
-    "awk '{print $1}' data.txt",
     "head -20 x | tail -5 | uniq -c",
 ]
 
@@ -57,6 +56,9 @@ REJECT = [
     "sed -f script.sed f",                    # script file could carry w
     "awk '{print > \"f\"}' x",                # awk redirection
     "awk 'BEGIN{system(\"rm x\")}'",
+    "awk '{print $1}' data.txt",              # program cannot be scoped safely
+    "awk 'BEGIN { \"touch marker\" | getline }'",
+    "awk 'BEGIN { getline x < \"/etc/passwd\" }'",
     "find . -delete",
     "find . -exec rm {} ;",
     "git push origin main",
@@ -104,6 +106,12 @@ def test_engine_grant_gates_on_classifier(tmp_path):
     # The grant never covers writes/network — those keep asking.
     assert eng.evaluate("run_shell", {"command": "rm -rf x"}, Meta()).needs_user
     assert eng.evaluate("run_shell", {"command": "curl https://x"}, Meta()).needs_user
+    for command in (
+        "awk 'BEGIN { \"touch marker\" | getline }'",
+        "awk 'BEGIN { getline x < \"/etc/passwd\" }'",
+    ):
+        decision = eng.evaluate("run_shell", {"command": command}, Meta())
+        assert not decision.allowed and decision.needs_user
 
 
 def test_grant_persists_via_session_grants(tmp_path):

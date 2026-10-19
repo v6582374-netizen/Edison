@@ -91,7 +91,20 @@ class CourseArchive:
                     source_hash TEXT NOT NULL, model TEXT NOT NULL, created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS coverage (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """)
+
+    def sync_status(self, key: str) -> dict:
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def save_sync_status(self, key: str, value: dict):
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO sync_state VALUES (?,?)",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
 
     def connect(self):
         db = sqlite3.connect(self.db, timeout=30)
@@ -119,14 +132,24 @@ class CourseArchive:
             self.save_platform_transcript(rid, raw)
 
     def save_platform_transcript(self, rid: str, raw: dict):
-        self._write_source(rid, "platform", raw)
         segments = platform_segments(raw)
+        previous = self._read_source(rid, "platform", None)
+        previous_segments = self._read_source(rid, "platform-segments", [])
+        if previous is not None and previous_segments != segments:
+            digest = hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest()
+            write_private_text(
+                self.root / "sources" / rid / "versions" / f"{digest}.json",
+                json.dumps(previous, ensure_ascii=False),
+            )
+        if previous_segments == segments and previous is not None:
+            return
+        self._write_source(rid, "platform", raw)
         self._write_source(rid, "platform-segments", segments)
         self._update_source_hash(rid)
         self.set_state(
             rid,
             "pending" if segments else "needs_transcript",
-            "" if segments else "平台没有可用字幕，等待音频补转写",
+            "" if segments else "平台没有可用字幕，等待平台生成",
         )
 
     def _source_path(self, rid: str, kind: str) -> Path:
@@ -200,17 +223,28 @@ class CourseArchive:
                 (rid,),
             ).fetchall()
         current_docs = {}
+        transcript_mode = self.sync_status("automation").get("perspective") == "transcript"
         for doc in docs:
-            if doc["source_hash"] == row["source_hash"]:
+            if doc["source_hash"] == row["source_hash"] and (
+                not transcript_mode or doc["perspective"] == "transcript"
+            ):
                 current_docs.setdefault(doc["perspective"], dict(doc))
         result = {
             **json.loads(row["metadata"]),
             "state": row["state"],
             "detail": row["detail"],
             "documents": list(current_docs.values()),
+            "history": [
+                dict(doc)
+                for doc in docs
+                if doc["id"] not in {current["id"] for current in current_docs.values()}
+            ],
         }
         if result["documents"]:
             result["state"] = "ready"
+        elif transcript_mode and result["state"] == "ready":
+            # A legacy exam note is history, not completion of the new transcript task.
+            result["state"] = "pending"
         return result
 
     def source_hash(self, rid: str) -> str:
@@ -237,6 +271,8 @@ class CourseArchive:
             ),
             "coverage": coverage,
             "courses": [{"key": k, "name": v[0]} for k, v in SOURCES.items() if k not in excluded],
+            "automation": self.sync_status("automation"),
+            "backup": self.sync_status("backup"),
         }
 
     def occurrence(self, course: str, date: str, first: int, last: int) -> dict:
@@ -303,7 +339,8 @@ class CourseArchive:
             raise ValueError("整理期间来源发生变化，请重试")
         record = self.recording(rid)
         doc_id = uuid.uuid4().hex
-        title = f"{record['name']} · {record['title']} · 复习笔记"
+        label = "字幕整理稿" if perspective == "transcript" else "复习笔记"
+        title = f"{record['name']} · {record['title']} · {label}"
         with self.connect() as db:
             db.execute(
                 "INSERT INTO documents VALUES (?,?,?,?,?,?,?,?)",

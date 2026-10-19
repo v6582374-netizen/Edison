@@ -458,6 +458,24 @@ def test_promote_workspace_repoints_orphan_session(tmp_path):
     assert roots[0]["primary"] and roots[0]["label"] == "workspace"
 
 
+def test_promote_workspace_without_shell_isolation(tmp_path, monkeypatch):
+    from coworker import agent as agent_module
+    from coworker.tools.shell import ShellIsolationUnavailable
+
+    def unavailable(*args, **kwargs):
+        raise ShellIsolationUnavailable("no supported filesystem sandbox")
+
+    monkeypatch.setattr(agent_module, "LocalExecutor", unavailable)
+    mgr = _cowork_manager(tmp_path)
+    repo = _repo(tmp_path, "project-no-shell")
+    sid = "sessNoShell"
+    engine = mgr.get_engine(sid, agent="cowork")
+    assert engine.executor is None
+
+    assert mgr.promote_workspace(sid, str(repo))["ok"]
+    assert Path(mgr.session_store.load(sid).workspace).resolve() == repo.resolve()
+
+
 def test_promote_workspace_refused_when_session_has_one(tmp_path):
     mgr = _cowork_manager(tmp_path)
     repo = _repo(tmp_path, "projectA")

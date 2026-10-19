@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   announceInboxUnlock,
@@ -60,6 +60,7 @@ import { Icon } from "./components/Icon";
 import { YouTubeView } from "./components/YouTubeView";
 import { CurriculumView } from "./components/CurriculumView";
 import { CourseArchiveView } from "./components/curriculum/CourseArchiveView";
+const ReaderView = lazy(() => import("./components/reader/ReaderView"));
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
@@ -276,26 +277,47 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
-  const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "curriculum" | "curriculum-archive"
+  const [surface, setSurfaceState] = useState<
+    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings" | "youtube" | "curriculum" | "curriculum-archive" | "reader"
   >(() => {
     const module = new URLSearchParams(location.search).get("module");
-    return module === "curriculum" || module === "curriculum-archive" ? module : "session";
+    return module === "curriculum" || module === "curriculum-archive" || module === "reader" ? module : "session";
   });
+  const readerExitGuard = useRef<(() => Promise<boolean>) | null>(null);
+  const registerReaderExit = useCallback((guard: (() => Promise<boolean>) | null) => {readerExitGuard.current = guard;}, []);
+  const setSurface = useCallback((next: typeof surface) => {
+    const guard = readerExitGuard.current;
+    if (!guard) setSurfaceState(next);
+    else void guard().then(ok => {if (ok) setSurfaceState(next);});
+  }, []);
+  const [readerBook, setReaderBook] = useState<string | null>(() => new URLSearchParams(location.search).get("book"));
+  const [readerNote, setReaderNote] = useState<string | null>(() => new URLSearchParams(location.search).get("note"));
+  const clearReaderNote = useCallback(() => setReaderNote(null), []);
+  const openReaderBook = (id: string | null, note: string | null = null) => {
+    const open = () => {setReaderBook(id); setReaderNote(note); setSurfaceState("reader");};
+    const guard = readerExitGuard.current;
+    if (!guard) open(); else void guard().then(ok => {if (ok) open();});
+  };
   const [archiveDocument, setArchiveDocument] = useState<string | null>(() => new URLSearchParams(location.search).get("document"));
   const openClassroomDocument = (id: string | null) => { setArchiveDocument(id); setSurface("curriculum-archive"); };
   useEffect(() => {
     const url = new URL(location.href);
     const existing = url.searchParams.get("module");
-    if (surface === "curriculum" || surface === "curriculum-archive") {
+    if (surface === "reader") {
+      url.searchParams.set("module", "reader"); url.searchParams.delete("document");
+      if (readerBook) url.searchParams.set("book", readerBook); else url.searchParams.delete("book");
+      if (readerBook && readerNote) url.searchParams.set("note", readerNote); else url.searchParams.delete("note");
+    } else if (surface === "curriculum" || surface === "curriculum-archive") {
+      url.searchParams.delete("book"); url.searchParams.delete("note");
       url.searchParams.set("module", surface);
       if (surface === "curriculum-archive" && archiveDocument) url.searchParams.set("document", archiveDocument);
       else url.searchParams.delete("document");
-    } else if (existing === "curriculum" || existing === "curriculum-archive") {
+    } else if (existing === "curriculum" || existing === "curriculum-archive" || existing === "reader") {
+      url.searchParams.delete("book"); url.searchParams.delete("note");
       url.searchParams.delete("module"); url.searchParams.delete("document");
     } else return;
     window.history.replaceState(null, "", url);
-  }, [surface, archiveDocument]);
+  }, [surface, archiveDocument, readerBook, readerNote]);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
@@ -1761,6 +1783,8 @@ export function App() {
         curriculumActive={surface === "curriculum"}
         onOpenCourseArchive={() => openClassroomDocument(null)}
         courseArchiveActive={surface === "curriculum-archive"}
+        onOpenReader={() => openReaderBook(null)}
+        readerActive={surface === "reader"}
         onOpenYouTube={() => setSurface("youtube")}
         youtubeActive={surface === "youtube"}
         onOpenScheduled={() => setSurface("scheduled")}
@@ -1777,7 +1801,9 @@ export function App() {
         inboxActive={surface === "inbox"}
         onPeekLeave={() => setNavPeek(false)}
       />
-      {surface === "youtube" ? (
+      {surface === "reader" ? (
+        <Suspense fallback={<p role="status">{t("reader.loading")}</p>}><ReaderView bookId={readerBook} noteTarget={readerNote} onTargetHandled={clearReaderNote} onOpenBook={openReaderBook} onExitGuard={registerReaderExit} /></Suspense>
+      ) : surface === "youtube" ? (
         <YouTubeView onModelSettings={() => openSettings("models")} onTranslationSettings={() => openSettings("youtube-translation")} />
       ) : surface === "curriculum" ? (
         <CurriculumView onOpenDocument={openClassroomDocument} />

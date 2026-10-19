@@ -1,0 +1,323 @@
+{
+  "scope": "source-map supplied content in official desktop 0.1.3293, line references 1-based, static evidence not execution",
+  "records": [
+    {
+      "source": "shared/foreground/utils/uploadFiles.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/uploadFiles.ts",
+      "sha256": "b04f4192011063a172681a1eab6a0e99881c350b2956d8e023c074cd2af431cf",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/utils/uploadFiles.ts",
+      "source_ordinal": 1272,
+      "line_matches": {
+        "sign_s3": [
+          90
+        ],
+        "reader/upload_files": [
+          121
+        ]
+      }
+    },
+    {
+      "source": "shared/database/internals/defineSchema/documents.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/database/internals/defineSchema/documents.ts",
+      "sha256": "33ae4db40e1da060360499d3dddeb5187dc3e878356f2eb48b9431be69bea593",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/database/internals/defineSchema/documents.ts",
+      "source_ordinal": 861,
+      "line_matches": {
+        "const readingPosition": [
+          19
+        ],
+        "currentScrollPosition:": [
+          76
+        ],
+        "readingPosition:": [
+          208
+        ],
+        "notes:": [
+          185
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/stateHooks/useChunksForDocument.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/stateHooks/useChunksForDocument.ts",
+      "sha256": "0ab634e7bc9da2cf354404a28633cc04a1966c0fce42155e6e20912edebab6ec",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/stateHooks/useChunksForDocument.ts",
+      "source_ordinal": 846,
+      "line_matches": {
+        "documentSpineToArray": [
+          33,
+          375
+        ],
+        "makeWebviewChunksFromDocumentChunks": [
+          54,
+          493
+        ]
+      }
+    },
+    {
+      "source": "shared/background/documentChunkLoading.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/background/documentChunkLoading.ts",
+      "sha256": "8eb05e16f6187639ea93c19c56a38fcbaae09737ceaf2d59b3ba8e3721ee0958",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/background/documentChunkLoading.ts",
+      "source_ordinal": 970,
+      "line_matches": {
+        "endpointPath": [
+          35
+        ],
+        "MAX_DOCUMENT_CHUNKS_COUNT_PER_PAGE": [
+          26,
+          27,
+          189
+        ]
+      }
+    },
+    {
+      "source": "apps/web/src/components/EpubTableOfContents.tsx",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/apps/web/src/components/EpubTableOfContents.tsx",
+      "sha256": "8ab284cc9b7ccaa1fbe5254c1323afe58f27ba0925868190e40c24367a5cb805",
+      "map": "artifacts/desktop-web/assets/App.b3454286.js.map",
+      "map_sha256": "1c78ba6c162d57fc1a82528360cd1a47c3096346c6812c6747ad5b54f4c2ae71",
+      "original_path": "../../src/components/EpubTableOfContents.tsx",
+      "source_ordinal": 625,
+      "line_matches": {
+        "handleTocItemClick": [
+          104,
+          129,
+          133
+        ],
+        "getHeadingElement": [
+          6,
+          106
+        ]
+      }
+    },
+    {
+      "source": "apps/web/src/hooks/useScrollLocation.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/apps/web/src/hooks/useScrollLocation.ts",
+      "sha256": "bebbc41e84da1422a77bcf5fe21fd116825c1671de8936cf91b619c2cb9cf431",
+      "map": "artifacts/desktop-web/assets/App.b3454286.js.map",
+      "map_sha256": "1c78ba6c162d57fc1a82528360cd1a47c3096346c6812c6747ad5b54f4c2ae71",
+      "original_path": "../../src/hooks/useScrollLocation.ts",
+      "source_ordinal": 588,
+      "line_matches": {
+        "scrollToPosition": [
+          157,
+          169,
+          189,
+          250
+        ],
+        "serializeCanonicalRange": []
+      }
+    },
+    {
+      "source": "apps/web/src/components/ContentFocusIndicator.tsx",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/apps/web/src/components/ContentFocusIndicator.tsx",
+      "sha256": "9da676497b3c5e9dd4c60086e62882c2cb996c964ffd07dec2c19a807ffb2c32",
+      "map": "artifacts/desktop-web/assets/App.b3454286.js.map",
+      "map_sha256": "1c78ba6c162d57fc1a82528360cd1a47c3096346c6812c6747ad5b54f4c2ae71",
+      "original_path": "../../src/components/ContentFocusIndicator.tsx",
+      "source_ordinal": 593,
+      "line_matches": {
+        "moveFocusIndicator": [
+          179,
+          275,
+          285,
+          337,
+          365,
+          411,
+          428,
+          477,
+          496,
+          529,
+          549,
+          567,
+          575,
+          604,
+          612,
+          648,
+          655,
+          668
+        ],
+        "desktop": []
+      }
+    },
+    {
+      "source": "shared/foreground/utils/locationSerialization/base.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/locationSerialization/base.ts",
+      "sha256": "d3c58eef4d9b38af2d2d69f47b8bb947281e5dcf9fd80bffd648973bc2c0b86e",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/utils/locationSerialization/base.ts",
+      "source_ordinal": 1122,
+      "line_matches": {
+        "getNodeOffsetDisplacement": [
+          101,
+          125,
+          213,
+          650,
+          733
+        ],
+        "serializePosition": [
+          404,
+          480,
+          601,
+          620,
+          626,
+          654,
+          786,
+          792,
+          839,
+          841
+        ],
+        "deserializePosition": [
+          404,
+          480,
+          601,
+          620,
+          626,
+          839
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/utils/locationSerialization/chunked.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/locationSerialization/chunked.ts",
+      "sha256": "e6ca6719eaf75f8cd237cb0c8345e90ef727bf0e82acbf63f76189fc3a48cb17",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/utils/locationSerialization/chunked.ts",
+      "source_ordinal": 1116,
+      "line_matches": {
+        "serializeCanonicalPosition": [
+          223,
+          433,
+          438
+        ],
+        "deserializeCanonicalPosition": [
+          223,
+          433,
+          438
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/utils/Renderer.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/Renderer.ts",
+      "sha256": "27cd51d7b645b3bd3f8a2f1c341f993e718f58e3a97164cc0b56fbd9a0ea2ce7",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/utils/Renderer.ts",
+      "source_ordinal": 1118,
+      "line_matches": {
+        "highlightLocation": [
+          183,
+          223,
+          234
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/contentFramePortalGateInternalMethods/index.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/contentFramePortalGateInternalMethods/index.ts",
+      "sha256": "189b8caeb0d4dec956a2b89675fc5f0edb863290f2e6ef347a7173d3d162f120",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/contentFramePortalGateInternalMethods/index.ts",
+      "source_ordinal": 1261,
+      "line_matches": {
+        "DeserializationFailed": [
+          316,
+          318,
+          564,
+          566
+        ],
+        "findText": [
+          71,
+          356,
+          2318,
+          3104,
+          3174,
+          3194,
+          3218
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/documentSearchEngine/documentSearchEngine.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/documentSearchEngine/documentSearchEngine.ts",
+      "sha256": "cefa69946d483d7814a3fda28e8644a6374ab5733d8391c931afa1d9840d4214",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/foreground/documentSearchEngine/documentSearchEngine.ts",
+      "source_ordinal": 671,
+      "line_matches": {
+        "CREATE VIRTUAL TABLE": [
+          398
+        ],
+        "tokenize=": [
+          408
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/utils/export.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/export.ts",
+      "sha256": "f7ebd163c8843c06f323adb611230c395c1eceb2150247effd7c06f59cd08ffb",
+      "map": "artifacts/desktop-web/assets/App.b3454286.js.map",
+      "map_sha256": "1c78ba6c162d57fc1a82528360cd1a47c3096346c6812c6747ad5b54f4c2ae71",
+      "original_path": "../../../../shared/foreground/utils/export.ts",
+      "source_ordinal": 234,
+      "line_matches": {
+        "DEFAULT_EXPORT_TEMPLATE": [
+          7,
+          50
+        ],
+        "export_document": [
+          52,
+          53
+        ]
+      }
+    },
+    {
+      "source": "shared/foreground/utils/exportHighlightsToFile.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/foreground/utils/exportHighlightsToFile.ts",
+      "sha256": "1867999d7fe2eec245543b238400debab8a96abdf2824f56274e2436c4bca7d5",
+      "map": "artifacts/desktop-web/assets/App.b3454286.js.map",
+      "map_sha256": "1c78ba6c162d57fc1a82528360cd1a47c3096346c6812c6747ad5b54f4c2ae71",
+      "original_path": "../../../../shared/foreground/utils/exportHighlightsToFile.ts",
+      "source_ordinal": 236,
+      "line_matches": {
+        "downloadFile": [
+          2,
+          8
+        ]
+      }
+    },
+    {
+      "source": "shared/utils/rwSanitizeHtml/forEPUBs.ts",
+      "local_source_path": "/Users/shiwen/Downloads/CodexProjects/ReaderAnalysis-20261013/artifacts/recovered-product-source/shared/utils/rwSanitizeHtml/forEPUBs.ts",
+      "sha256": "50685600f1b168d902146716bd8c66fe68ac23399143f8b69d8384b839bd64ec",
+      "map": "artifacts/desktop-web/assets/index.145b7c60.js.map",
+      "map_sha256": "916044c0e966ebecbf9eecd01d1471d7f66fd86b3bb237b4ada1260efec323bd",
+      "original_path": "../../../../shared/utils/rwSanitizeHtml/forEPUBs.ts",
+      "source_ordinal": 1074,
+      "line_matches": {
+        "rwSanitizeForEPUBs": [
+          12
+        ],
+        "sanitizeHtml": [
+          1,
+          27
+        ]
+      }
+    }
+  ]
+}

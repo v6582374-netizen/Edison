@@ -187,6 +187,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         await manager.aclose()  # stop gateway + close MCP connections on shutdown
 
     app = FastAPI(title="coworker", version="0.0.0", lifespan=lifespan)
+    from .web_auth import WebAuth, attach_web_auth
+
+    web_auth = WebAuth.from_environment()
+    if web_auth is not None:
+        attach_web_auth(app, web_auth)
     api_token = os.environ.get("COWORKER_API_TOKEN", "")
     tokenless_paths = {
         "/v1/health",
@@ -204,6 +209,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
 
     def _websocket_authenticated(ws: WebSocket) -> bool:
+        if web_auth is not None and web_auth.valid(ws.cookies.get("edison_session")):
+            return True
         if not api_token:
             return True
         protocols = {
@@ -221,6 +228,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             not api_token
             or request.method == "OPTIONS"
             or request.url.path in tokenless_paths
+            or (web_auth is not None and request.url.path in {"/login", "/v1/web-auth/login", "/v1/web-auth/check", "/v1/web-auth/logout"})
             # `/v1/board` carries its own, stronger auth: per-actor board tokens
             # (identity + access), designed to be handed to external harnesses and
             # other machines — which can never hold the machine-local sidecar token.
@@ -246,6 +254,8 @@ def create_app(manager: SessionManager) -> FastAPI:
     attach_youtube(app, manager)
     from .curriculum import attach_curriculum
     attach_curriculum(app, manager)
+    from .reader import attach_reader
+    attach_reader(app, manager)
 
     @app.get("/v1/health")
     def health(request: Request) -> dict[str, Any]:
@@ -2058,10 +2068,15 @@ def create_app(manager: SessionManager) -> FastAPI:
         # CORS never gates WebSockets, so a cross-site page could otherwise open this socket
         # and drive the session into tool calls. Reject a disallowed browser Origin before
         # accepting the handshake (1008 = policy violation).
-        if not _origin_allowed(ws.headers.get("origin")):
+        browser_origin = ws.headers.get("origin")
+        if not (
+            _origin_allowed(browser_origin)
+            or (web_auth is not None and browser_origin == os.environ.get("EDISON_WEB_ORIGIN"))
+        ):
             await ws.close(code=1008)
             return
-        await ws.accept(subprotocol="openworker" if api_token else None)
+        requested_protocols = ws.headers.get("sec-websocket-protocol", "")
+        await ws.accept(subprotocol="openworker" if "openworker" in requested_protocols.split(", ") else None)
         agent = ws.query_params.get("agent") or "code"
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
@@ -2838,10 +2853,15 @@ def create_app(manager: SessionManager) -> FastAPI:
         if not _websocket_authenticated(ws):
             await ws.close(code=1008)
             return
-        if not _origin_allowed(ws.headers.get("origin")):
+        browser_origin = ws.headers.get("origin")
+        if not (
+            _origin_allowed(browser_origin)
+            or (web_auth is not None and browser_origin == os.environ.get("EDISON_WEB_ORIGIN"))
+        ):
             await ws.close(code=1008)
             return
-        await ws.accept(subprotocol="openworker" if api_token else None)
+        requested_protocols = ws.headers.get("sec-websocket-protocol", "")
+        await ws.accept(subprotocol="openworker" if "openworker" in requested_protocols.split(", ") else None)
         manager.register_event_client(ws.send_json)
         try:
             while True:
