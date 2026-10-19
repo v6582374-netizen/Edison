@@ -10,7 +10,7 @@ it("identifies an expired Edison login before reporting a YouTube failure", asyn
     JSON.stringify({ error: "login required" }), { status: 401 },
   )));
   await expect(youtubeCapability("session_cookies.status")).rejects.toThrow(
-    "Edison 登录已失效，请在新标签页打开 /login 重新登录，再返回重试。无需更换 YouTube Cookie。",
+    "Edison 登录已失效，请重新登录。已许可的 YouTube 后台工作继续，无需重新连接 YouTube。",
   );
 });
 
@@ -44,4 +44,24 @@ it("authenticates REST and session WebSocket calls with the launch token", async
   const session = new Session("s1", "/workspace", "code", { onEvent: vi.fn() });
   const socket = (session as unknown as { ws: FakeWebSocket }).ws;
   expect(socket.protocols).toEqual(["openworker", "launch-token"]);
+});
+
+it("returns an expired self-hosted workspace to login from any API", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { protocol: "https:", origin: "https://edison.example", assign });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify({ error: "login required" }), { status: 401 },
+  )));
+  await expect(getHealth()).rejects.toThrow("Edison 登录已失效");
+  expect(assign).toHaveBeenCalledWith("/login");
+});
+
+it("does not redirect a provider or launch-token authorization failure to Edison login", async () => {
+  const assign = vi.fn();
+  vi.stubGlobal("location", { protocol: "https:", origin: "https://edison.example", assign });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify({ error: "provider authorization required" }), { status: 401 },
+  )));
+  await expect(youtubeCapability("connection.status")).rejects.toThrow("401");
+  expect(assign).not.toHaveBeenCalled();
 });

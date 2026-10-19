@@ -84,6 +84,14 @@
     "source": "Personal timetable dated 28 Sep 2026 · Dates and periods from the university calendar."
   },
   "youtube": {
+    "等待重试": "Waiting to retry",
+    "下一次检查": "Next check",
+    "视频为私有": "Private video",
+    "视频已删除": "Video deleted",
+    "没有访问权限": "Access denied",
+    "获取原因待核实": "Acquisition cause unverified",
+    "字幕暂未提供": "Captions not yet available",
+    "冷却结束后自动探测恢复，也可以取消处理。持续限流时每六小时共享检查一次，不消耗各视频的重试预算。": "Recovery is checked automatically after cooldown; you can still cancel. Persistent throttling is checked once every six hours without spending individual video retry budgets.",
     "等待视频结束": "Awaiting video completion",
     "视频类型、公开时间或实际结束时间尚未可靠核实，等待官方复查。": "Video type, publication time or actual end time is unverified. Awaiting another official check.",
     "直播或首映尚未结束，等待结束后核实实际结束时间。": "This live stream or Premiere has not ended. Waiting to verify its actual end time.",
@@ -529,6 +537,8 @@
     "show_less": "Show less",
     "show_n_more": "Show {{n}} more",
     "sign_out": "Sign out",
+    "edison_sign_out": "Sign out of Edison",
+    "edison_sign_out_detail": "Authorized YouTube work continues after sign-out. Turn off Auto Update to stop automatic updates.",
     "account_aria": "Account: {{email}}",
     "account_not_signed_in_aria": "Account: not signed in",
     "not_signed_in_row": "Not signed in",

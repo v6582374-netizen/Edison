@@ -2,8 +2,8 @@
 
 One vocabulary for both external capabilities of preparation: subtitle
 acquisition and the host model. Account-level restrictions pause every request
-to the same account; ordinary transient failures spend a task's bounded
-automatic budget; unrecoverable failures are never retried automatically.
+to the same account. Acquisition failures share capability recovery; model
+transient failures retain a task budget. Unrecoverable failures stop automatically.
 """
 
 from __future__ import annotations
@@ -18,10 +18,13 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Literal
 
-from youtube_strataread.downloader.request_policy import MAX_RATE_LIMIT_ATTEMPTS
+from youtube_strataread.downloader.request_policy import (
+    MAX_RATE_LIMIT_ATTEMPTS,
+    ConfirmedCaptionAbsence,
+)
 
-# The subtitle safety baseline already allows an initial attempt plus three
-# automatic retries; every retryable failure shares that one task budget.
+# Model transient errors retain an initial attempt plus three retries.
+# Caption availability and shared acquisition recovery have independent clocks.
 MAX_AUTOMATIC_ATTEMPTS = MAX_RATE_LIMIT_ATTEMPTS
 RETRY_BASE = 10 * 60
 RETRY_MAX = 6 * 60 * 60
@@ -37,6 +40,7 @@ class Failure:
     kind: Kind
     reason: str
     retry_at: float | None = None
+    category: str | None = None
 
 
 def retry_delay(attempts: int) -> float:
@@ -100,7 +104,6 @@ _NETWORK = re.compile(
     r"timed? ?out|connection (?:reset|refused|aborted)|temporary failure|network is unreachable|"
     r"remote end closed|name resolution|HTTP Error 5\d\d|EOF occurred|ConnectError|ReadTimeout|"
     r"APIConnectionError|APITimeoutError", re.I)
-_NO_CAPTIONS = re.compile(r"no subtitles|subtitle was empty", re.I)
 
 
 def _transient(statuses: set[int], text: str, error: BaseException) -> bool:
@@ -113,12 +116,19 @@ def classify_caption(error: BaseException, now: float) -> Failure:
     """Subtitle 429 is handled by the shared request cooldown before this point."""
     statuses, deadline, text = _facts(error, now)
     reason = str(error).strip() or type(error).__name__
-    if _NO_CAPTIONS.search(text):
-        # Fresh uploads often publish captions minutes after the video.
-        return Failure("caption_pending", "字幕尚未提供，稍后自动再试。", deadline)
+    if statuses & {401, 403}:
+        return Failure("fatal", reason, category="access_denied")
     if _transient(statuses, text, error):
-        return Failure("transient", "字幕获取暂时失败：" + reason, deadline)
-    return Failure("fatal", reason)
+        return Failure("transient", "字幕获取暂时失败，等待共享能力探测。", deadline)
+    if isinstance(error, ConfirmedCaptionAbsence) and not statuses:
+        return Failure("caption_pending", "已确认视频可访问，但字幕尚未提供。", deadline)
+    if re.search(r"private video", text, re.I):
+        return Failure("fatal", reason, category="private")
+    if re.search(r"video (?:has been )?(?:removed|deleted)", text, re.I):
+        return Failure("fatal", reason, category="deleted")
+    if statuses & {401, 403} or re.search(r"do not have permission|access denied|members.only", text, re.I):
+        return Failure("fatal", reason, category="access_denied")
+    return Failure("fatal", reason, category="unknown")
 
 
 def classify_model(error: BaseException, now: float) -> Failure:

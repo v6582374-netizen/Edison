@@ -86,7 +86,7 @@ def test_reports_video_duration_even_when_no_captions_are_available(monkeypatch)
         files_by_lang={},
     )
     metadata = []
-    with pytest.raises(YouTubeError, match="no subtitles"):
+    with pytest.raises(YouTubeError, match="尚无法确认原因"):
         download_subtitles(
             "https://youtu.be/abcdefghijk",
             on_metadata=lambda video_id, duration: metadata.append((video_id, duration)),
@@ -127,7 +127,8 @@ def test_caption_wait_keeps_publication_and_duration_in_the_workspace(monkeypatc
 
     _install_fake_ytdlp(
         monkeypatch,
-        info={"id": "abcdefghijk", "duration": 2538, "title": "No captions"},
+        info={"id": "abcdefghijk", "duration": 2538, "title": "No captions",
+              "availability": "public", "formats": [{"format_id": "18"}], "live_status": "not_live"},
         files_by_lang={},
     )
     workspace = LocalWorkspace.open(tmp_path)

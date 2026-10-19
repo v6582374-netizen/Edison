@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 from platformdirs import user_data_dir
 
 from youtube_strataread.downloader.request_policy import (
-    MAX_RATE_LIMIT_ATTEMPTS,
     YouTubeRequestPolicy,
 )
 from youtube_strataread.workbench.freshness import WAITING_REASONS, preparation_admission
@@ -72,6 +71,7 @@ class LocalWorkspace:
         self.root = root
         self.database_path = root / "workspace.sqlite3"
         self.youtube_requests = YouTubeRequestPolicy(self.database_path)
+        self.youtube_requests.now = self.now
         self.model_gate = ModelAccountGate(self.database_path)
 
     @staticmethod
@@ -227,6 +227,7 @@ class LocalWorkspace:
                     raise ValueError("视频状态已变化，请查看现有任务或文档。")
                 connection.execute("""UPDATE candidates SET request_kind='manual',preparation_state='queued',
                     preparation_stage='queued',failure_reason=NULL,retry_at=NULL,rate_limit_attempts=0,
+                    caption_first_absent_at=NULL,caption_checks=0,caption_checks_ended_at=NULL,
                     preparation_completed_at=NULL WHERE video_id=?""", (video_id,))
                 self._recheck_waiting(connection)
                 self._activity_event(connection, video_id, 'restored' if action == 'restore' else 'queued')
@@ -275,6 +276,12 @@ class LocalWorkspace:
             captions_cooling = (
                 self.youtube_requests._read(connection)["cooldown_until"] > self.youtube_requests.now()
             )
+            recovery = self.youtube_requests._read(connection).get("failure_kind")
+            if recovery and connection.execute(
+                "SELECT 1 FROM candidates c WHERE preparation_state = 'acquiring' "
+                "AND NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = c.video_id) LIMIT 1"
+            ).fetchone():
+                captions_cooling = True
             self._recheck_waiting(connection)
             row = connection.execute(
                 """
@@ -383,29 +390,20 @@ class LocalWorkspace:
             self._activity_event(connection, video_id, 'commenced', '已实际开工，同次自动任务可跨窗口续办。')
             return True
 
-    def defer_rate_limited(self, video_id: str, *, attempted: bool = True) -> None:
+    def record_acquisition_failure(self, video_id: str, kind: str) -> None:
         with sqlite3.connect(self.database_path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT rate_limit_attempts FROM candidates WHERE video_id = ? AND preparation_state = 'acquiring'",
-                (video_id,),
-            ).fetchone()
-            if row is None:
-                return
-            attempts = row[0] + int(attempted)
-            exhausted = attempts >= MAX_RATE_LIMIT_ATTEMPTS
-            state = "failed" if exhausted else "rate_limited"
-            reason = (
-                "YouTube 多次限流，已停止自动重试此视频。冷却结束后可手动重试。"
-                if exhausted else "YouTube 请求限流，冷却结束后自动重试。"
-            )
-            connection.execute(
-                """UPDATE candidates SET preparation_state = ?, preparation_stage = ?,
-                   failure_reason = ?, rate_limit_attempts = ?, stage_updated_at = ?,
-                   preparation_completed_at = ? WHERE video_id = ?""",
-                (state, state, reason, attempts, time.time(), time.time() if exhausted else None, video_id),
-            )
-            self._activity_event(connection, video_id, state, reason)
+            connection.execute("UPDATE candidates SET acquisition_failure_kind = ? WHERE video_id = ?",
+                               (kind, video_id))
+
+    def defer_rate_limited(self, video_id: str, *, attempted: bool = True) -> None:
+        # Service restrictions never spend individual video/model retry budgets.
+        state = self.youtube_requests.snapshot()
+        self.defer_retry(video_id, Failure("transient", state.get("reason", "YouTube 冷却中。"),
+                                          state["cooldown_until"]), charge=False)
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("UPDATE candidates SET preparation_state = 'rate_limited', "
+                               "preparation_stage = 'rate_limited' WHERE video_id = ? "
+                               "AND preparation_state = 'waiting_retry'", (video_id,))
 
     def defer_retry(self, video_id: str, failure: Failure, *, charge: bool = True) -> str:
         """Release the processing position until the next attempt is due.
@@ -413,6 +411,8 @@ class LocalWorkspace:
         Charged failures spend the task's bounded automatic budget and back off;
         uncharged waits (a restricted account) only honour the given deadline.
         """
+        if failure.kind == "caption_pending":
+            return self.defer_caption_absence(video_id)
         now = time.time()
         with sqlite3.connect(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -435,6 +435,35 @@ class LocalWorkspace:
                    WHERE video_id = ?""",
                 (state, state, reason, attempts, retry_at, now, completed, video_id),
             )
+            self._activity_event(connection, video_id, state, reason)
+        return state
+
+    def defer_caption_absence(self, video_id: str) -> str:
+        now = self.now()
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT caption_first_absent_at, caption_checks FROM candidates "
+                "WHERE video_id = ? AND preparation_state = 'acquiring'", (video_id,)
+            ).fetchone()
+            if row is None:
+                return ""
+            first = row[0] if row[0] is not None else now
+            checks = row[1] + int(row[0] is not None)
+            # Missed checkpoints are not replayed: one check at the current time
+            # either schedules the next future checkpoint or ends the finite wait.
+            future = [first + offset for offset in (3600, 21600, 86400) if first + offset > now]
+            retry_at = future[0] if future else None
+            state = "waiting_retry" if retry_at is not None else "failed"
+            reason = ("字幕尚未提供，等待下一次自动检查。" if retry_at is not None
+                      else "字幕自动检查已结束，需要时请显式重试。已有素材保留。")
+            connection.execute(
+                """UPDATE candidates SET caption_first_absent_at = ?, caption_checks = ?,
+                   caption_checks_ended_at = ?, retry_at = ?, preparation_state = ?,
+                   preparation_stage = ?, failure_reason = ?, stage_updated_at = ?,
+                   preparation_completed_at = ? WHERE video_id = ?""",
+                (first, checks, now if retry_at is None else None, retry_at, state, state,
+                 reason, now, now if retry_at is None else None, video_id))
             self._activity_event(connection, video_id, state, reason)
         return state
 
@@ -528,6 +557,7 @@ class LocalWorkspace:
                 UPDATE candidates
                 SET preparation_state = 'queued', failure_reason = NULL, retry_at = NULL,
                     rate_limit_attempts = 0, commenced_at = NULL, request_kind = 'manual',
+                    caption_first_absent_at = NULL, caption_checks = 0, caption_checks_ended_at = NULL,
                     preparation_started_at = NULL, preparation_completed_at = NULL
                 WHERE video_id = ?
                 """,
@@ -538,6 +568,7 @@ class LocalWorkspace:
         statement = """
             UPDATE candidates SET preparation_state = 'queued', failure_reason = NULL,
                 rate_limit_attempts = 0, retry_at = NULL,
+                caption_first_absent_at = NULL, caption_checks = 0, caption_checks_ended_at = NULL,
                 preparation_started_at = NULL, preparation_completed_at = NULL
             WHERE preparation_state = 'failed'
         """
@@ -632,7 +663,8 @@ class LocalWorkspace:
             rows = connection.execute(
                 f"""SELECT video_id, title, channel_title, preparation_state, failure_reason,
                     manuscript_version, published_at, duration_seconds, commenced_at, request_kind, playlist_added_at, source_observed_at,
-                    retry_at, rate_limit_attempts AS automatic_attempts FROM candidates WHERE {where}
+                    retry_at, rate_limit_attempts AS automatic_attempts, acquisition_failure_kind,
+                    caption_first_absent_at, caption_checks, caption_checks_ended_at FROM candidates WHERE {where}
                     ORDER BY discovered_at ASC, video_id ASC LIMIT ? OFFSET ?""",
                 (state, limit, offset),
             ).fetchall()
@@ -1295,10 +1327,14 @@ class LocalWorkspace:
                 "shorts_status": "TEXT NOT NULL DEFAULT 'unknown'",
                 "shorts_checked_at": "REAL",
                 "shorts_retry_at": "REAL",
-                # Shared automatic attempt budget for every retryable failure,
-                # named for the subtitle throttle that introduced it.
+                # Retained column name for the model transient-error budget.
+                # Shared acquisition recovery never spends it.
                 "rate_limit_attempts": "INTEGER NOT NULL DEFAULT 0",
                 "retry_at": "REAL",
+                "acquisition_failure_kind": "TEXT",
+                "caption_first_absent_at": "REAL",
+                "caption_checks": "INTEGER NOT NULL DEFAULT 0",
+                "caption_checks_ended_at": "REAL",
                 "commenced_at": "REAL",
                 "timing_status": "TEXT NOT NULL DEFAULT 'publication'",
                 "completion_status": "TEXT NOT NULL DEFAULT 'unverified'",

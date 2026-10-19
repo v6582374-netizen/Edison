@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 _COOKIE = "edison_session"
-_SESSION_SECONDS = 12 * 60 * 60
+_SESSION_SECONDS = 24 * 60 * 60
 _ATTEMPT_SECONDS = 60
 _MAX_ATTEMPTS = 5
 
@@ -91,7 +91,7 @@ button {{ width:100%; height:44px; margin-top:28px; border:0; border-radius:9px;
 @media (prefers-color-scheme:dark) {{ body {{ background:#202025; color:#eee; }}
  main {{ background:#29292f; border-color:#414148; }} p {{ color:#aaa; }}
  input {{ border-color:#777; }} button {{ background:#e7e7ea; color:#222; }} .error {{ color:#ff9999; }} }}
-</style></head><body><main><h1>Edison</h1><p>登录后继续使用你的工作空间。</p>
+</style></head><body><main><h1>Edison</h1><p>登录后固定 24 小时可访问工作空间。退出或到期不影响已许可的 YouTube 后台工作。</p>
 <form method="post" action="/v1/web-auth/login">
 <label for="username">用户名</label><input id="username" name="username" autocomplete="username" required autofocus>
 <label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required>
@@ -142,17 +142,17 @@ def attach_web_auth(app: FastAPI, auth: WebAuth) -> None:
     @app.get("/v1/web-auth/check")
     def check(request: Request) -> Response:
         if auth.valid(request.cookies.get(_COOKIE)):
-            return Response(status_code=204)
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
         original_path = request.headers.get("x-forwarded-uri", "/")
         if original_path.startswith(("/v1/", "/ws/")):
-            return JSONResponse({"error": "login required"}, status_code=401)
-        return RedirectResponse("/login", status_code=303)
+            return JSONResponse({"error": "login required"}, status_code=401, headers={"Cache-Control": "no-store"})
+        return RedirectResponse("/login", status_code=303, headers={"Cache-Control": "no-store"})
 
     @app.post("/v1/web-auth/logout")
     def logout(request: Request) -> Response:
         session_id = request.cookies.get(_COOKIE)
         if session_id:
             auth.sessions.pop(session_id, None)
-        response = RedirectResponse("/login", status_code=303)
-        response.delete_cookie(_COOKIE, path="/")
+        response = RedirectResponse("/login", status_code=303, headers={"Cache-Control": "no-store"})
+        response.delete_cookie(_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
         return response

@@ -211,3 +211,14 @@ describe("New session button", () => {
     expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
   });
 });
+
+it("offers Edison logout separately from background YouTube permission", async () => {
+  vi.stubGlobal("location", { protocol: "https:", origin: "https://edison.example" });
+  stubFetch([{ match: "/v1/personas", json: PERSONAS }, { match: "/v1/settings", json: { nav_layout: "flat" } }]);
+  render(<Sidebar {...baseProps} />);
+  fireEvent.click(screen.getByTestId("account-row"));
+  const logout = await screen.findByRole("button", { name: "Sign out of Edison" });
+  expect(logout.closest("form")?.getAttribute("action")).toBe("/v1/web-auth/logout");
+  expect(logout.closest("form")?.getAttribute("method")).toBe("post");
+  expect(logout.getAttribute("title")).toContain("work continues");
+});
