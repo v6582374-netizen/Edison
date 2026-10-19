@@ -45,6 +45,7 @@ export type DiscoveryState = {
     valid_from?: number | null; valid_until?: number | null}[];
 };
 export type Activity = {
+  cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "aborted"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number};
   discovery?: DiscoveryState;
   document_count?: number;
   cancelled?: number;

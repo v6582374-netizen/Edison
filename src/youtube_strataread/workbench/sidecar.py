@@ -16,6 +16,7 @@ from youtube_strataread.workbench.connection import (
     ConnectionService,
     GoogleOAuthGateway,
 )
+from youtube_strataread.workbench.cutover import CutoverBlocked, admitted
 from youtube_strataread.workbench.discovery import SubscriptionDiscovery, YouTubeUploadsAPI
 from youtube_strataread.workbench.keychain import NativeKeychainVault
 from youtube_strataread.workbench.library import (
@@ -75,6 +76,19 @@ def handle_request(
     discovery: SubscriptionDiscovery,
     library: LibraryService | None = None,
 ) -> dict[str, object]:
+    guarded = {"library.regenerate", "activity.restore", "activity.retry", "activity.retry_all_failed",
+               "collection.refresh_updates", "collection.backfill_updates", "connection.configure",
+               "connection.migrate_credentials", "connection.authorize"}
+    try:
+        if isinstance(request.get("capability"), str) and request["capability"] in guarded:
+            with admitted(workspace):
+                return _handle_request(request, workspace, connection, discovery, library)
+        return _handle_request(request, workspace, connection, discovery, library)
+    except CutoverBlocked as error:
+        return _response(request.get("id"), error=str(error))
+
+
+def _handle_request(request, workspace, connection, discovery, library):
     request_id = request.get("id")
     capability = request.get("capability")
     arguments = request.get("arguments", {})
@@ -214,6 +228,20 @@ def main() -> int:
         vault=_vault(),
         oauth=GoogleOAuthGateway(),
     )
+    try:
+        connection.claim_server_ownership()
+    except ConnectionError as error:
+        # A legacy process cannot start acquisition alongside the canonical host.
+        # Keep the line protocol readable for old callers, without any workers.
+        for raw_request in sys.stdin:
+            if raw_request.strip():
+                try:
+                    request = json.loads(raw_request)
+                    request_id = request.get("id") if isinstance(request, dict) else None
+                except json.JSONDecodeError:
+                    request_id = None
+                print(json.dumps(_response(request_id, error=str(error))), flush=True)
+        return 0
     discovery = SubscriptionDiscovery(
         workspace=workspace, source=YouTubeUploadsAPI(workspace=workspace, connection=connection)
     )
@@ -255,8 +283,10 @@ def main() -> int:
         pass
     finally:
         stop_batch.set()
-        discovery.stop()
-        preparation.stop()
+        # Retain the process lease until every admitted writer has returned.
+        # A short join or interrupting the downloader is not a saved-work proof.
+        for worker in (batch, scanner, memberships):
+            worker.join()
         connection.release_server_ownership()
     return 0
 

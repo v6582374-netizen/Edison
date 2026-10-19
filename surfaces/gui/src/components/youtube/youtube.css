@@ -867,3 +867,19 @@
   .yp-documents .yp-row::after { left: 86px; right: 10px; }
   .yp-documents .yp-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.yp-maintenance {
+  grid-column: 1 / -1;
+  margin: 20px 28px 0;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+}
+.yp-maintenance p { margin: 8px 0; line-height: 1.6; }
+.yp-maintenance-tools { position: relative; font-size: var(--fs-ui); }
+.yp-maintenance-tools summary { cursor: pointer; white-space: nowrap; }
+.yp-maintenance-tools[open] { max-width: 300px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.yp-maintenance-tools p { line-height: 1.5; }

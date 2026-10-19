@@ -270,6 +270,12 @@ class LocalWorkspace:
         with sqlite3.connect(self.database_path, isolation_level=None) as connection:
             connection.row_factory = sqlite3.Row
             connection.execute("BEGIN IMMEDIATE")
+            held = connection.execute(
+                "SELECT value FROM workspace_meta WHERE key = 'youtube_cutover'"
+            ).fetchone()
+            if held and json.loads(held[0]).get("held"):
+                connection.commit()
+                return None
             paused = connection.execute(
                 "SELECT value FROM workspace_meta WHERE key = 'drain_paused'"
             ).fetchone()

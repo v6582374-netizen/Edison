@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from youtube_strataread.workbench.connection import ConnectionService, SubscriptionSource
+from youtube_strataread.workbench.cutover import CutoverBlocked, admitted
 from youtube_strataread.workbench.freshness import WINDOW_SECONDS, event_completion
 from youtube_strataread.workbench.workspace import LocalWorkspace
 from youtube_strataread.workbench.youtube_api import (
@@ -210,24 +211,31 @@ class SubscriptionDiscovery:
     def run(self, stop: threading.Event, wake: threading.Event | None = None) -> None:
         """Independent local scheduler; no subtitle/model work runs on this loop."""
         while not stop.wait(.5):
-            if self.manual_timing_check and not self._stopping.is_set():
-                self.manual_timing_check()
-            if self.workspace.meta('drain_paused') == '1':
-                continue
-            previous = json.loads(self.workspace.meta('youtube_discovery') or '{}')
-            due = previous.get('next_scan_at', 0)
-            if isinstance(self.source, YouTubeUploadsAPI):
-                gate = self.source.connection.api.gate()
-                # Retry transient/global failures only when their own deadline permits.
-                if gate.get('retry_at'):
-                    due = gate['retry_at']
-                elif gate.get('kind') == 'authorization':
-                    continue
-            if time.time() < due and not (wake and wake.is_set()):
-                continue
-            if wake:
-                wake.clear()
-            self.refresh(automatic=True)
+            try:
+                with admitted(self.workspace):
+                    self._cycle(wake)
+            except CutoverBlocked:
+                return
+
+    def _cycle(self, wake):
+        if self.manual_timing_check and not self._stopping.is_set():
+            self.manual_timing_check()
+        if self.workspace.meta('drain_paused') == '1':
+            return
+        previous = json.loads(self.workspace.meta('youtube_discovery') or '{}')
+        due = previous.get('next_scan_at', 0)
+        if isinstance(self.source, YouTubeUploadsAPI):
+            gate = self.source.connection.api.gate()
+            # Retry transient/global failures only when their own deadline permits.
+            if gate.get('retry_at'):
+                due = gate['retry_at']
+            elif gate.get('kind') == 'authorization':
+                return
+        if time.time() < due and not (wake and wake.is_set()):
+            return
+        if wake:
+            wake.clear()
+        self.refresh(automatic=True)
 
     def stop(self) -> None:
         self._stopping.set()
@@ -235,7 +243,7 @@ class SubscriptionDiscovery:
     def refresh(self, *, limit: int = _MAX_REFRESH_CANDIDATES, automatic: bool = False) -> DiscoveryResult:
         if not 1 <= limit <= _MAX_REFRESH_CANDIDATES:
             raise ConnectionError('Discovery limit must be between 1 and 100')
-        with self._lock:
+        with admitted(self.workspace), self._lock:
             return self._discover(limit, automatic=automatic)
 
     def backfill(self, *, days: int = 3, limit: int = _MAX_REFRESH_CANDIDATES) -> DiscoveryResult:

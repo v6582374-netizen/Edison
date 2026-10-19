@@ -365,7 +365,7 @@ export function YouTubeView({
     });
   }
   const sources = [...sourcesById.values()];
-  const status = activity?.drain_paused
+  const status = activity?.cutover?.held ? yt("YouTube 切换暂停") : activity?.drain_paused
     ? yt("更新已暂停")
     : activity && !activity.model_ready
       ? yt("等待模型设置")
@@ -393,6 +393,13 @@ export function YouTubeView({
   return (
     <main ref={mainRef} tabIndex={-1} {...modal.capture} className={`yp-main${page === "documents" ? " yp-documents" : ""}`} aria-label={yt("YouTube 资料库")}>
       <NoticeStack messages={[message, progressMessage, panel ? "" : panelMessage, activity?.discovery_error || ""].map(value => value ? yt(value) : "")} />
+      {activity?.cutover?.held && <section aria-label={yt("YouTube 切换暂停")} className="yp-maintenance" role="region">
+        <strong>{yt(activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
+        <p>{yt(activity.cutover.reason || "")}</p>
+        <p>{yt("Auto Update 的选择与已接收请求保持不变；仍可阅读、取消处理或断开 YouTube。")}</p>
+        {activity.cutover.state !== "aborted" && activity.cutover.deadline_at && <p>{yt("本次尝试截止：{{deadline}}", {deadline: new Date(activity.cutover.deadline_at * 1000).toLocaleString()})}</p>}
+        {activity.cutover.state !== "aborted" && <button className="yp-btn" onClick={() => void call("cutover.abort").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("中止切换并保持采集暂停")}</button>}
+      </section>}
       <header className="yp-head">
         <div className="yp-header">
           <nav className="yp-page-nav" aria-label={yt("YouTube 页面")}>
@@ -402,9 +409,14 @@ export function YouTubeView({
             <button aria-current={page === "add" ? "page" : undefined} onClick={() => setPage("add")}>{yt("添加视频")}</button>
           </nav>
           <div className="yp-tools">
+            {!activity?.cutover?.held && <details className="yp-maintenance-tools">
+              <summary>{yt("维护工具")}</summary>
+              <p>{yt("切换暂停会等待在途成果保存，并暂停新的采集与连接变更。重启不会自动恢复采集。")}</p>
+              <button className="yp-btn" onClick={() => void call("cutover.begin").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("开始切换暂停")}</button>
+            </details>}
             {page === "progress" && <div className="yp-progress-actions" ref={setProgressActions} />}
             <span className="yp-sync" role="status">
-              <span className={`yp-dot ${activity?.drain_paused ? "pending" : ""}`} />{status}
+              <span className={`yp-dot ${activity?.drain_paused || activity?.cutover?.held ? "pending" : ""}`} />{status}
             </span>
             <button
               className="yp-iconbtn yp-labeled"
