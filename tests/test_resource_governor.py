@@ -138,3 +138,61 @@ def test_nonresource_start_failure_does_not_replay_human_open_on_heartbeat(tmp_p
         assert session.status()['state'] == expected_state
     finally:
         session.shutdown()
+
+
+def test_observed_youtube_reclaim_plateau_releases_before_kernel_high():
+    # Public-page replay: peak 636911616 B (< old 608 MiB release),
+    # memory.events high 78757 and PSI full total ~44 s despite zero OOM.
+    observed = [ResourceObservation(available=2*1024**3, browser_memory=636911616, browser_swap=0, constrained=True)]
+    governor = ResourceGovernor(observe=lambda: observed[0])
+    assert governor.status()['release_browser']
+    # Leave 32 MiB below the operator-owned 576 MiB high watermark.
+    observed[0] = ResourceObservation(2*1024**3, 544*1024**2, 0, True)
+    assert governor.status()['release_browser']
+    observed[0] = ResourceObservation(2*1024**3, 500*1024**2, 0, True)
+    assert not governor.status()['release_browser']
+    governor.require_browser_start()
+
+
+@pytest.mark.parametrize("stubborn_descendant", [False, True])
+def test_stalled_partial_screen_releases_on_pressure_and_keeps_observation(tmp_path, monkeypatch, stubborn_descendant):
+    import subprocess
+    import sys
+    import time
+    from youtube_strataread.workbench.resource_governor import LinuxResources
+    from youtube_strataread.workbench.session_browser import ServerBrowser
+    marker = tmp_path / 'awaiting-screen'
+    ticks = tmp_path / 'child-ticks'
+    child = "import signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); p=pathlib.Path(" + repr(str(ticks)) + ");\nwhile True:\n p.write_text(str(time.monotonic())); time.sleep(.02)"
+    worker = tmp_path / 'partial-screen.py'
+    worker.write_text("""import pathlib,subprocess,sys,time
+sys.stdin.readline()
+if sys.argv[2]:
+    subprocess.Popen([sys.executable,'-c',sys.argv[2]])
+    while not pathlib.Path(sys.argv[3]).exists(): time.sleep(.01)
+pathlib.Path(sys.argv[1]).touch()
+sys.stdout.write('{"ok":');sys.stdout.flush()
+time.sleep(2)
+print('true,"result":{}}',flush=True)
+""")
+    monkeypatch.setattr(LinuxResources, 'observe', lambda self, **_: ResourceObservation(
+        2*1024**3, 636911616 if marker.exists() else 0, 0, True))
+    browser = ServerBrowser(command_timeout=.5)
+    browser.process = subprocess.Popen([sys.executable, str(worker), str(marker), child if stubborn_descendant else '', str(ticks)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
+    process = browser.process
+    started = time.monotonic()
+    try:
+        with pytest.raises(ContentSessionError) as error:
+            browser.command('screen', {})
+        assert error.value.kind == 'resource', str(error.value)
+        assert browser.last_resource_release['browser_memory_bytes'] == 636911616
+        assert not browser.alive
+        assert process.poll() is not None
+        assert time.monotonic() - started < (4.5 if stubborn_descendant else 1.5)
+        if stubborn_descendant:
+            stopped = ticks.read_text()
+            time.sleep(.1)
+            assert ticks.read_text() == stopped
+    finally:
+        browser.close()

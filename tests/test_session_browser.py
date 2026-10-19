@@ -134,28 +134,36 @@ def test_close_kills_orphaned_descendants_even_when_driver_already_exited(tmp_pa
             os.killpg(process.pid, signal.SIGKILL)
 
 
-def test_timed_out_transport_cannot_return_a_previous_commands_response(tmp_path):
+@pytest.mark.parametrize("partial", [False, True])
+def test_timed_out_transport_cannot_return_a_previous_commands_response(tmp_path, monkeypatch, partial):
     import subprocess
     import sys
 
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceObservation
+    monkeypatch.setattr(LinuxResources, "observe", lambda self, **_: ResourceObservation(2*1024**3, 0, 0, True))
     browser = ServerBrowser(command_timeout=0.05)
     worker = tmp_path / "delayed.py"
     worker.write_text("""import json,sys,time
 for line in sys.stdin:
     command=json.loads(line)['command']
+    response=json.dumps({'ok':True,'result':{'command':command}})
+    split=5 if sys.argv[1]=='partial' else 0
+    sys.stdout.write(response[:split]);sys.stdout.flush()
     time.sleep(.2)
-    print(json.dumps({'ok':True,'result':{'command':command}}),flush=True)
+    print(response[split:],flush=True)
 """)
     browser.process = subprocess.Popen(
-        [sys.executable, str(worker)],
+        [sys.executable, str(worker), "partial" if partial else "silent"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
         start_new_session=True,
     )
     try:
-        with pytest.raises(ContentSessionError, match="超时"):
+        with pytest.raises(ContentSessionError, match="超时") as error:
             browser.command("screen", {})
+        assert error.value.kind == "maintenance"
+        assert browser.last_resource_release is None
         with pytest.raises(ContentSessionError, match="退出"):
             browser.command("snapshot", {})
     finally:

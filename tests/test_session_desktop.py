@@ -76,6 +76,8 @@ def test_truncated_desktop_retires_handoff_and_reopen_uses_fresh_connection(tmp_
     import sys
 
     from youtube_strataread.workbench import session_browser
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceObservation
+    monkeypatch.setattr(LinuxResources, "observe", lambda self, **_: ResourceObservation(2*1024**3, 0, 0, True))
     from youtube_strataread.workbench.content_session import ContentSession, ContentSessionError
 
     temporary = tempfile.TemporaryDirectory(prefix="ed-rfb-", dir="/tmp")

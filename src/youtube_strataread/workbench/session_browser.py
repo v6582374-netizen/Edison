@@ -34,6 +34,8 @@ class ServerBrowser:
         self.owner_fd = owner_fd
         self.start_url = start_url
         self.process = None
+        self.last_resource_release = None
+        self._response_buffer = b""
 
     @property
     def resource_released(self):
@@ -56,6 +58,8 @@ class ServerBrowser:
             return
         from youtube_strataread.workbench.resource_governor import ResourceGovernor
         ResourceGovernor().require_browser_start()
+        self.last_resource_release = None
+        self._response_buffer = b""
         profile.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.process = subprocess.Popen(
             [
@@ -81,12 +85,42 @@ class ServerBrowser:
             raise
 
     def _read(self, timeout=30):
-        if not select.select([self.process.stdout], [], [], timeout)[0]:
-            self.close()
-            raise ContentSessionError("maintenance", "服务器浏览器响应超时，请关闭后重新打开。")
+        from youtube_strataread.workbench.resource_governor import ResourceGovernor
+        resources = ResourceGovernor()
+        deadline = time.monotonic() + timeout
+        while True:
+            # The child can stall inside a desktop operation. The host remains
+            # outside its cgroup and observes pressure even during partial frames.
+            state = resources.status()
+            if state["release_browser"]:
+                self.last_resource_release = state
+                self.close(resource_pressure=True)
+                raise ContentSessionError("resource", "服务器资源不足，已释放登录画面；等待资源恢复。")
+            if b"\n" in self._response_buffer:
+                line, self._response_buffer = self._response_buffer.split(b"\n", 1)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise ContentSessionError("maintenance", "服务器浏览器响应超时，请关闭后重新打开。")
+            if not select.select([self.process.stdout], [], [], min(.1, remaining))[0]:
+                continue
+            try:
+                chunk = os.read(self.process.stdout.fileno(), 65536)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                released = self.resource_released
+                self.close(resource_pressure=released)
+                raise ContentSessionError(
+                    "resource" if released else "maintenance",
+                    "服务器资源不足，已释放登录画面；等待资源恢复。" if released
+                    else "服务器浏览器已退出，请检查运行环境。",
+                )
+            self._response_buffer += chunk
         try:
-            result = json.loads(self.process.stdout.readline())
-        except (ValueError, OSError):
+            result = json.loads(line)
+        except (ValueError, UnicodeError):
             self.close()
             raise ContentSessionError(
                 "maintenance", "服务器浏览器已退出，请检查运行环境。"
@@ -121,7 +155,7 @@ class ServerBrowser:
                 self.close()
             raise
         except (BrokenPipeError, OSError):
-            released = self.resource_released
+            released = self.last_resource_release is not None or self.resource_released
             self.close()
             raise ContentSessionError(
                 "resource" if released else "maintenance",
@@ -135,20 +169,23 @@ class ServerBrowser:
         finally:
             self.close()
 
-    def close(self):
+    def close(self, *, resource_pressure=False):
         process = self.process
         if not process:
             return
         try:
-            if process.poll() is None:
+            if process.poll() is None and not resource_pressure:
                 process.stdin.close()  # graceful browser/profile flush on EOF
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(timeout=20)
+            # Pressure has no snapshot to publish: revoke the whole native group
+            # immediately rather than waiting for a stalled desktop/profile flush.
             # Includes orphaned Chromium descendants even if the driver exited.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
             until = time.monotonic() + 3
             while time.monotonic() < until:
+                process.poll()  # Reap the leader so it cannot keep an empty group alive.
                 try:
                     os.killpg(process.pid, 0)
                 except ProcessLookupError:
