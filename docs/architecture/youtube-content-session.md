@@ -19,7 +19,9 @@ the driver verifies the desktop process's socket ownership against Linux proc
 TCP/IPv6 and UNIX listener tables; an unexpected TCP listener, missing private
 UNIX listener or unreadable inspection state fails closed. This check repeats
 before every command and on a one-second idle polling interval, retiring the desktop
-when its transport changes. Screens and typed input are
+when its transport changes. Desktop ingress is killed and its client disconnected
+before any normal Chrome shutdown wait, including snapshot confirmation, so a
+blocked browser window cannot prolong an exposed listener. Screens and typed input are
 not persisted; handoff responses have `Cache-Control: no-store`. Operators must
 also keep request-body tracing disabled at reverse proxies and observability
 layers. Passwords and security challenges are completed by the person on the
@@ -161,7 +163,9 @@ private transport. Deliberately misconfigured real x11vnc processes must be
 rejected for either IPv4 or IPv6 listening, with their processes and ports cleaned
 up. An inherited real socket activated after readiness verifies both idle
 retirement without another request and rejection of subsequent input/screenshot
-commands. UNIX RFB, pipe-timeout
+commands. A real Chrome process stopped with `SIGSTOP` verifies that listener
+revocation finishes independently of slow browser shutdown; connection timeouts
+never count as proof of port closure. UNIX RFB, pipe-timeout
 and process-group tests still run. A skip is missing evidence, not acceptance.
 The Web E2E verifies native keyboard clipboard paste
 in Chromium; WebKit runs the other content-session scenarios without claiming

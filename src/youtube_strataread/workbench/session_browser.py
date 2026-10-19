@@ -268,6 +268,18 @@ def _serve(profile, start_url, runtime):
     desktop = None
     quit_requested = False
 
+    def stop_desktop():
+        # This process owns no durable state. Revoke its ingress immediately,
+        # before any Chrome window/dialog or profile-flush wait can block cleanup.
+        try:
+            if display is not None:
+                if display.poll() is None:
+                    display.kill()
+                display.wait(timeout=3)
+        finally:
+            if desktop is not None:
+                desktop.__exit__(None, None, None)
+
     def stop_browser():
         nonlocal quit_requested
         if browser.poll() is None:
@@ -359,6 +371,7 @@ def _serve(profile, start_url, runtime):
                     desktop.navigate("https://www.youtube.com/")
                     reply()
                 elif command == "snapshot":
+                    stop_desktop()
                     stop_browser()
                     reply({"cookies": profile_snapshot(profile)})
                     break
@@ -379,24 +392,18 @@ def _serve(profile, start_url, runtime):
                 break
     finally:
         try:
-            stop_browser()
+            stop_desktop()
         finally:
-            if browser.poll() is None:
-                browser.terminate()
-                try:
-                    browser.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    browser.kill()
-                    browser.wait(timeout=3)
-            if desktop is not None:
-                desktop.__exit__(None, None, None)
-            if display is not None:
-                display.terminate()
-                try:
-                    display.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    display.kill()
-                    display.wait(timeout=3)
+            try:
+                stop_browser()
+            finally:
+                if browser.poll() is None:
+                    browser.terminate()
+                    try:
+                        browser.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        browser.kill()
+                        browser.wait(timeout=3)
 
 
 def _display(root):

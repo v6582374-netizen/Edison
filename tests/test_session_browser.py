@@ -1,6 +1,7 @@
 """Real browser protocol; no Google credentials or platform requests."""
 
 import contextlib
+import errno
 import os
 
 import pytest
@@ -245,15 +246,16 @@ def test_native_handoff_rejects_tcp_listener_and_reaps_processes(tmp_path, monke
         assert not Path("/proc", pid_file.read_text()).exists()
         with socket.socket(socket.AF_INET if family == "ipv4" else socket.AF_INET6) as check:
             check.settimeout(1)
-            assert check.connect_ex((address[0], port)) != 0
+            assert check.connect_ex((address[0], port)) == errno.ECONNREFUSED
     finally:
         browser.close()
 
 
-@pytest.mark.parametrize("detection", ["idle", "command"])
+@pytest.mark.parametrize("detection", ["idle", "command", "stalled_close"])
 def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatch, detection):
     import json
     import shutil
+    import signal
     import socket
     import sys
     import time
@@ -284,6 +286,18 @@ def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatc
     wrapper.chmod(0o700)
     monkeypatch.setenv("EDISON_CONTENT_BROWSER_ENABLED", "1")
     monkeypatch.setenv("EDISON_CONTENT_X11VNC", str(wrapper))
+    chrome_pid = None
+    chrome_pid_file = tmp_path / "chrome.pid"
+    if detection == "stalled_close":
+        chrome_wrapper = tmp_path / "controlled-chrome"
+        chrome_wrapper.write_text(
+            f"#!{shutil.which('python3')}\n"
+            "import os,sys,pathlib\n"
+            f"pathlib.Path({str(chrome_pid_file)!r}).write_text(str(os.getpid()))\n"
+            f"os.execv({executable!r}, [{executable!r}, *sys.argv[1:]])\n"
+        )
+        chrome_wrapper.chmod(0o700)
+        monkeypatch.setenv("EDISON_CONTENT_CHROMIUM", str(chrome_wrapper))
     browser = ServerBrowser(start_url="about:blank")
     try:
         browser.start(tmp_path / "profile")
@@ -292,18 +306,39 @@ def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatc
         # The real x11vnc process inherits a bound, non-listening TCP socket.
         # A fork sharing that same kernel socket starts listening only now.
         # This exercises live proc ownership without mocking process/socket data.
+        if detection == "stalled_close":
+            chrome_pid = int(chrome_pid_file.read_text())
+            os.kill(chrome_pid, signal.SIGSTOP)
         trigger.touch()
         deadline = time.monotonic() + 3
         while not listening.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert listening.exists()
-        if detection == "idle":
+        if detection == "stalled_close":
+            # Privacy teardown cannot wait for Chrome's normal profile shutdown.
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                with socket.socket() as check:
+                    check.settimeout(0.1)
+                    if check.connect_ex(("127.0.0.1", info["port"])) == errno.ECONNREFUSED:
+                        break
+                time.sleep(0.1)
+            else:
+                pytest.fail("desktop TCP listener outlived the privacy failure")
+            assert browser.alive  # Chrome shutdown is still waiting, by construction.
+            assert (
+                Path("/proc", str(chrome_pid), "stat").read_text().rsplit(")", 1)[1].split()[0]
+                == "T"
+            )
+            os.kill(chrome_pid, signal.SIGCONT)
+            chrome_pid = None
+        elif detection == "idle":
             # No browser request may be needed to retire an exposed idle desktop.
             browser.process.wait(timeout=5)
             assert not browser.alive
             with socket.socket() as check:
                 check.settimeout(1)
-                assert check.connect_ex(("127.0.0.1", info["port"])) != 0
+                assert check.connect_ex(("127.0.0.1", info["port"])) == errno.ECONNREFUSED
         else:
             with pytest.raises(ContentSessionError) as failure:
                 browser.command("screen", {})
@@ -312,6 +347,9 @@ def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatc
         assert not Path("/proc", str(info["pid"])).exists()
         with socket.socket() as check:
             check.settimeout(1)
-            assert check.connect_ex(("127.0.0.1", info["port"])) != 0
+            assert check.connect_ex(("127.0.0.1", info["port"])) == errno.ECONNREFUSED
     finally:
+        if chrome_pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(chrome_pid, signal.SIGCONT)
         browser.close()
