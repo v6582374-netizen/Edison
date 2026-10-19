@@ -380,3 +380,23 @@ with policy.acquisition():
         child.wait(timeout=5)
     with policy.acquisition():
         assert policy.snapshot()['strikes'] == 1
+
+
+def test_standalone_downloader_import_does_not_require_posix_locking():
+    import os
+    import subprocess
+    import sys
+
+    script = '''import importlib.abc, sys
+class NoPosixLock(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "fcntl":
+            raise ModuleNotFoundError("fcntl is absent on Windows")
+sys.modules.pop("fcntl", None)
+sys.meta_path.insert(0, NoPosixLock())
+from youtube_strataread.downloader.youtube import download_subtitles
+assert callable(download_subtitles)
+'''
+    result = subprocess.run([sys.executable, '-c', script], text=True,
+                            capture_output=True, env=os.environ.copy(), timeout=10)
+    assert result.returncode == 0, result.stderr

@@ -5,7 +5,7 @@ import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import type {Page, APIRequestContext} from '@playwright/test';
 
-type Scenario = {model_failure?: boolean; retry_after?: string; caption_failure?: string; hold_classification?: boolean; platform_pages?: boolean; channels?: string[]; videos?: {id: string; published: number; added?: number; channel?: string; kind?: string; claimed_publication?: number; live?: Record<string, string>; caption_status?: string; shorts?: boolean | null; listed?: boolean}[];
+type Scenario = {delay_caption_request?: boolean; model_failure?: boolean; retry_after?: string; caption_failure?: string; hold_classification?: boolean; platform_pages?: boolean; channels?: string[]; videos?: {id: string; published: number; added?: number; channel?: string; kind?: string; claimed_publication?: number; live?: Record<string, string>; caption_status?: string; shorts?: boolean | null; listed?: boolean}[];
   global_failure?: string; failure_endpoint?: string; auth_failure?: boolean; channel_failure?: string; caption_cooldown?: boolean; more_pages?: boolean};
 async function harness(page: Page, request: APIRequestContext, scenario: Scenario, releaseModel = true) {
   const root = await mkdtemp(join(tmpdir(), 'edison-api-'));
@@ -465,5 +465,50 @@ test('unknown empty captions and access failures never become caption availabili
     expect((await app.call('activity.snapshot')).waiting_retry).toBe(0);
     await page.getByRole('button',{name:/暂不可用/}).click();
     await expect(page.getByRole('region',{name:'处理队列',exact:true})).toContainText('获取原因待核实');
+  }finally{await app.close();}
+});
+
+
+test('caption checks cannot run after 24 hours across pause and restart without explicit retry',async({page,request})=>{
+  test.setTimeout(60000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:'absent',videos:[{id:'absent-one',published:now-30}]};
+  const app=await harness(page,request,scenario);
+  const count=async()=>(await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n').length;
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).waiting_retry).toBe(1);
+    await app.toggle(false);
+    await app.stop();
+    await app.clock(app.now+86401);
+    await app.start();
+    await app.call('activity.snapshot');
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).failed).toBe(1);
+    expect(await count()).toBe(1);
+    await app.scenario({...scenario,caption_failure:undefined});
+    await page.getByRole('button',{name:/处理失败/}).click();
+    await page.getByRole('button',{name:'继续重试',exact:true}).click();
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
+    expect(await count()).toBe(2);
+  }finally{await app.close();}
+});
+
+
+test('a claimed caption check cannot cross its deadline during request pacing',async({page,request})=>{
+  test.setTimeout(60000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:'absent',videos:[{id:'absent-one',published:now-30}]};
+  const app=await harness(page,request,scenario);
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).waiting_retry).toBe(1);
+    await app.scenario({...scenario,delay_caption_request:true});
+    await app.clock(app.now+86400);
+    await expect.poll(()=>app.exists('caption-request-waiting')).toBe(true);
+    await app.clock(app.now+86401);
+    await app.write('caption-request-release');
+    await expect.poll(async()=>(await app.call('activity.snapshot')).failed).toBe(1);
+    expect((await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n')).toHaveLength(1);
   }finally{await app.close();}
 });

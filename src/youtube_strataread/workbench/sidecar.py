@@ -257,6 +257,7 @@ def main() -> int:
         stop_batch.set()
         discovery.stop()
         preparation.stop()
+        connection.release_server_ownership()
     return 0
 
 

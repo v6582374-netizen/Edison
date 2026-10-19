@@ -6,7 +6,7 @@ Top-level requests are spaced by at least two seconds and video acquisitions by 
 
 Cooldown is retained across restart and cannot be bypassed by refresh, resume, regeneration, or retry. The former rule requiring manual action after three automatic retries is superseded for transient network failures and throttling: one shared capability check runs at a time, and recovery resumes eligible work without exhausting every waiting video's budget. Pauses, exclusions, cancellation, age eligibility and manuscript retention still apply; recovery never enables Auto Update or reconnects a deliberately disconnected identity. Migration of historical exhausted records is a separate decision, not permission to reset all failures.
 
-Genuine per-video caption absence has a separate finite wait: check one, six and twenty-four hours after the first confirmed absence, then retain the video with automatic checks ended until an explicit retry. This classification requires ruling out network, throttling and authentication barriers; an empty result alone is insufficient. Confirmed deletion or access denial is not caption waiting.
+Genuine per-video caption absence has a separate finite wait: check one, six and twenty-four hours after the first confirmed absence, then retain the video with automatic checks ended until an explicit retry. The 24-hour instant is inclusive; after it, an unperformed automatic check expires before acquisition. Pause, restart and request pacing do not extend this window. The host rechecks both when claiming work and immediately before each paced external request. This classification requires ruling out network, throttling and authentication barriers; an empty result alone is insufficient. Confirmed deletion or access denial is not caption waiting.
 
 Metadata is extracted once and reused to download the chosen subtitle language. The workbench owns retry timing rather than allowing hidden immediate yt-dlp retries. The scope is this local workspace's workbench traffic; it cannot coordinate unrelated applications sharing the same network exit.
 
@@ -44,7 +44,9 @@ Consumers outside the host must use `YouTubeRequestPolicy.acquisition()` around
 both acquisition and recording its outcome. The public subtitle downloader also
 uses this scope. Recovery probes share an advisory file lock beside the workspace
 database; ownership is released on scope exit or process death, rather than by an
-expiring timer that could overlap a still-running request. Acquisition on another
+expiring timer that could overlap a still-running request. POSIX uses `flock` and
+Windows uses a nonblocking one-byte CRT lock; platform modules are imported only
+when that platform acquires ownership. No unlocked fallback is permitted. Acquisition on another
 capability's retained transcript does not acquire this lock. A probe that only
 confirms absent/inaccessible captions retains recovery and schedules a later
 shared check; metadata alone is not a successful caption probe.

@@ -166,6 +166,10 @@ shorts.urlopen = platform_page
 
 
 def captions(self, url, *, before_subtitles=None):
+    if config().get('delay_caption_request'):
+        (root / 'caption-request-waiting').touch()
+        wait('caption-request-release')
+        self.requests.before_request()
     video_id = url.split('=')[-1]
     if before_subtitles:
         video = next(v for v in config().get('videos', []) if v['id'] == video_id)
