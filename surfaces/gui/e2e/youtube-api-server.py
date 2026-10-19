@@ -171,6 +171,20 @@ def captions(self, url, *, before_subtitles=None):
         video = next(v for v in config().get('videos', []) if v['id'] == video_id)
         before_subtitles({'id':video_id,'live_status':video.get('caption_status','not_live')})
     (root / ('caption-' + video_id)).touch()
+    with (root / 'caption-requests.jsonl').open('a') as log:
+        log.write(json.dumps({'video_id':video_id, 'at':now()}) + '\n')
+    if config().get('caption_failure') == 'absent-all' or (config().get('caption_failure') == 'absent' and video_id == 'absent-one'):
+        from youtube_strataread.downloader.request_policy import ConfirmedCaptionAbsence
+        raise ConfirmedCaptionAbsence('可访问视频尚无字幕')
+    if config().get('caption_failure') == 'terminal':
+        from youtube_strataread.downloader.youtube import YouTubeError
+        raise YouTubeError({'private':'Private video', 'deleted':'This video has been removed',
+                            'denied':'You do not have permission to access this video',
+                            'unknown':'no subtitles: unknown empty response'}[video_id])
+    if config().get('caption_failure') == 'rate':
+        raise HTTPError(url,429,'Too Many Requests',{'Retry-After':config().get('retry_after','0')},None)
+    if config().get('caption_failure') == 'network':
+        raise ConnectionError('Connection reset by peer')
     if config().get('caption_cooldown'):
         from youtube_strataread.downloader.youtube import YouTubeError
         raise YouTubeError('HTTP Error 429: Too Many Requests')
@@ -184,6 +198,10 @@ YtDlpCaptions.acquire = captions
 class Provider(ProviderClient):
     def complete(self, *, model, messages, tools=None, **settings):
         (root / 'model-started').touch()
+        with (root / 'model-requests.jsonl').open('a') as log:
+            log.write(json.dumps({'at':now()}) + '\n')
+        if config().get('model_failure'):
+            raise HTTPError('https://model.example',429,'Account limit',{'Retry-After':'1200'},None)
         wait('model-release')
         return AssistantTurn(text=source_from_prompt(messages[-1]['content']), finish_reason='stop')
 

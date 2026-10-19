@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from test_workbench_library import candidate, ready_service
 
+from youtube_strataread.downloader.request_policy import ConfirmedCaptionAbsence
 from youtube_strataread.downloader.youtube import YouTubeError
 from youtube_strataread.workbench import workspace as workspace_module
 from youtube_strataread.workbench.library import LibraryService
@@ -65,7 +66,7 @@ def test_pending_subtitles_yield_to_runnable_work_and_back_off(tmp_path, clock):
     clock[0] += 1
     ws.add_candidate(fresh("healthy", clock))
     service = service_with(ws)
-    service.captions.failures["pending"] = YouTubeError(
+    service.captions.failures["pending"] = ConfirmedCaptionAbsence(
         "no subtitles (official, auto-generated, or live_chat fallback) were available for this video")
 
     assert service.run_next()
@@ -85,35 +86,6 @@ def test_pending_subtitles_yield_to_runnable_work_and_back_off(tmp_path, clock):
     assert second_retry - clock[0] > first_delay
 
 
-def test_backoff_grows_and_exhaustion_requires_explicit_retry(tmp_path, clock):
-    ws = open_workspace(tmp_path, clock)
-    ws.add_candidate(fresh("pending", clock))
-    discovered_at = ws.asset("pending")["discovered_at"]
-    service = service_with(ws)
-    service.captions.failures["pending"] = OSError("Connection reset by peer")
-
-    delays = []
-    while ws.asset("pending")["preparation_state"] != "failed":
-        assert service.run_next()
-        item = ws.activity_items("waiting_retry")["items"]
-        if item:
-            delays.append(item[0]["retry_at"] - clock[0])
-            assert not service.run_next()  # not due yet
-            clock[0] = item[0]["retry_at"]
-    assert len(service.captions.calls) == 4
-    assert delays == sorted(delays) and delays[0] < delays[-1]
-    failed = ws.asset("pending")
-    assert "需手动重试" in failed["failure_reason"]
-    clock[0] += 10 * 86400
-    assert not service.run_next()  # no unlimited automatic attempts
-
-    service.captions.failures.clear()
-    library = LibraryService(workspace=ws, preparation=service)
-    library.retry("pending")
-    retried = ws.asset("pending")
-    assert retried["discovered_at"] == discovered_at  # same task, same place in line
-    assert service.run_next()
-    assert ws.asset("pending")["preparation_state"] == "ready"
 
 
 class ProviderError(Exception):
@@ -213,7 +185,7 @@ def test_retry_budget_deadlines_and_account_limits_survive_restart(tmp_path, clo
     clock[0] += 1
     ws.add_candidate(fresh("model", clock))
     service = model_service(ws)
-    service.captions.failures["pending"] = OSError("Connection reset by peer")
+    service.captions.failures["pending"] = ConfirmedCaptionAbsence("confirmed absent")
     service.manuscripts.outcomes = [ProviderError(429, retry_after="3600")]
     assert service.run_next() and service.run_next()
     before = {item["video_id"]: item for item in ws.activity_items("waiting_retry")["items"]}
@@ -253,7 +225,7 @@ def test_stage_timings_separate_caption_waiting_processing_and_readability(tmp_p
     ws.add_candidate(fresh("timed", clock))
     discovered = clock[0]
     service = service_with(ws)
-    service.captions.failures["timed"] = YouTubeError("no subtitles were available for this video")
+    service.captions.failures["timed"] = ConfirmedCaptionAbsence("no subtitles were available for this video")
     clock[0] += 5
     assert service.run_next()
     retry_at = ws.activity_items("waiting_retry")["items"][0]["retry_at"]

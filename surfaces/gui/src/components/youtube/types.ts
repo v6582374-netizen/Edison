@@ -49,10 +49,11 @@ export type Activity = {
   filtered?: number;
   awaiting_classification?: number;
   rate_limited?: number;
+  waiting_retry?: number;
   expired?: number;
   awaiting_timing?: number;
   awaiting_completion?: number;
-  youtube_requests?: { cooldown_until: number; strikes: number };
+  youtube_requests?: { cooldown_until: number; strikes: number; reason?: string };
   current?: CurrentPreparation[];
   events?: ProgressEvent[];
   console?: ConsoleEntry[];
@@ -137,6 +138,9 @@ export type CurrentPreparation = {
   preparation_stage: string | null; preparation_started_at: number | null; stage_updated_at: number | null;
 };
 export type QueueItem = {
+  caption_checks_ended_at?: number | null;
+  acquisition_failure_kind?: string | null;
+  retry_at?: number | null;
   video_id: string; title: string; channel_title: string; preparation_state: string;
   published_at?: string; duration_seconds?: number | null;
   failure_reason: string | null; manuscript_version: number | null;

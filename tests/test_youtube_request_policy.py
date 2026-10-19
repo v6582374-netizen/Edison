@@ -17,7 +17,6 @@ from test_workbench_library import candidate, ready_service
 from youtube_strataread.downloader.request_policy import (
     INITIAL_COOLDOWN,
     MAX_COOLDOWN,
-    MAX_RATE_LIMIT_ATTEMPTS,
     REQUEST_INTERVAL,
     VIDEO_INTERVAL,
     YouTubeRateLimited,
@@ -179,28 +178,6 @@ def test_subtitle_429_blocks_acquisition_but_not_official_api(tmp_path, monkeypa
     assert ws.youtube_requests.snapshot()["strikes"] == 0
 
 
-def test_automatic_retries_are_bounded_but_cooldown_remains_global(tmp_path):
-    ws = LocalWorkspace.open(tmp_path)
-    ws.set_meta("drain_paused", "0")
-    ws.add_candidate(candidate("one"))
-    service = ready_service(ws)
-    service.captions = SimpleNamespace(
-        acquire=Mock(side_effect=YouTubeError("HTTP Error 429: Too Many Requests"))
-    )
-    clock = [1000.0]
-    ws.youtube_requests.now = lambda: clock[0]
-    for _ in range(MAX_RATE_LIMIT_ATTEMPTS):
-        assert service.run_next()
-        assert not service.run_next()
-        clock[0] = ws.youtube_requests.snapshot()["cooldown_until"]
-    assert ws.asset("one")["preparation_state"] == "failed"
-    assert "停止自动重试" in ws.asset("one")["failure_reason"]
-    assert not service.run_next()
-    ws.retry_failed("one")
-    service.captions = ready_service(ws).captions
-    assert service.run_next()
-    assert ws.asset("one")["preparation_state"] == "ready"
-
 
 def test_rate_limited_item_can_be_cancelled_without_resetting_cooldown(tmp_path):
     ws = LocalWorkspace.open(tmp_path)
@@ -354,3 +331,52 @@ def test_waiting_for_another_requests_cooldown_does_not_consume_retry_budget(tmp
             ).fetchone()[0]
             == 0
         )
+
+
+def test_old_caption_success_cannot_clear_a_newer_failure_even_after_its_deadline(tmp_path):
+    workspace = LocalWorkspace.open(tmp_path)
+    policy = workspace.youtube_requests
+    clock = [1000.0]
+    policy.now = lambda: clock[0]
+    started_sequence = policy.snapshot().get('failure_sequence', 0)
+    failure = policy.limit(YouTubeRateLimited())
+    clock[0] = failure.retry_at + 1
+    policy.caption_succeeded(observed_sequence=started_sequence)
+    assert policy.snapshot()['strikes'] == 1
+
+
+def test_recovery_probe_has_one_owner_and_releases_after_process_crash(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    workspace = LocalWorkspace.open(tmp_path)
+    policy = workspace.youtube_requests
+    policy.now = lambda: 1000.0
+    deadline = policy.limit(YouTubeRateLimited()).retry_at
+    policy.now = lambda: deadline
+    with policy.acquisition():
+        another = YouTubeRequestPolicy(workspace.database_path)
+        another.now = lambda: deadline
+        with pytest.raises(YouTubeRateLimited), another.acquisition():
+            pytest.fail('a second recovery probe must not run')
+    script = '''import sys, time
+from pathlib import Path
+from youtube_strataread.downloader.request_policy import YouTubeRequestPolicy
+policy = YouTubeRequestPolicy(Path(sys.argv[1]))
+policy.now = lambda: float(sys.argv[2])
+with policy.acquisition():
+    print("owned", flush=True)
+    time.sleep(30)
+'''
+    child = subprocess.Popen([sys.executable, '-c', script, str(workspace.database_path), str(deadline)],
+                             stdout=subprocess.PIPE, text=True, env=os.environ.copy())
+    try:
+        assert child.stdout.readline().strip() == 'owned'
+        with pytest.raises(YouTubeRateLimited), policy.acquisition():
+            pytest.fail('the subprocess owns the probe')
+    finally:
+        child.kill()
+        child.wait(timeout=5)
+    with policy.acquisition():
+        assert policy.snapshot()['strikes'] == 1
