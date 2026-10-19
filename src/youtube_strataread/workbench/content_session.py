@@ -67,6 +67,7 @@ class ContentSession:
         self._last_input = 0.0
         self._browser = browser
         self._state = {}
+        self._leases: dict[Path, int] = {}
 
     def _claim(self):
         if self._retired:
@@ -295,10 +296,20 @@ class ContentSession:
             path = directory / "cookies.txt"
             self._atomic(path, current.read_text())
             lease = Snapshot(path, self._state["generation"])
+            self._leases[path] = lease.generation
         try:
             yield lease
         finally:
+            with self._lock:
+                self._leases.pop(path, None)
             shutil.rmtree(directory, ignore_errors=True)
+
+    def snapshot_active(self, path):
+        """Permission is independent of successful credential-file deletion."""
+        with self._lock:
+            return (not self._retired and not self._state.get("disconnected")
+                    and path in self._leases
+                    and self._leases[path] == self._state.get("generation"))
 
     def accept(self, lease, result, video_id):
         with self._lock:
@@ -348,13 +359,16 @@ class ContentSession:
             self._claim()
             self._state = {"generation": self._state.get("generation", 0) + 1, "disconnected": True, "cleanup_pending": True}
             self._verified = False
-            self._save()
-            # Remove disposable credentials immediately; consumers observe loss
-            # of their lease and stop while the browser flushes and exits.
-            shutil.rmtree(self.root / "consumers", ignore_errors=False)
-            (self.root / "current.cookies").unlink(missing_ok=True)
-            (self.root / "consumers").mkdir(mode=0o700)
-            self.close_browser()
+            try:
+                self._save()
+                if (self.root / "consumers").exists():
+                    shutil.rmtree(self.root / "consumers", ignore_errors=False)
+                (self.root / "current.cookies").unlink(missing_ok=True)
+                (self.root / "consumers").mkdir(mode=0o700)
+            finally:
+                # Failure to erase secrets must never keep their writer alive.
+                # Readers use the in-memory generation fence, not file absence.
+                self.close_browser()
             for name in ("profile", "consumers"):
                 shutil.rmtree(self.root / name, ignore_errors=False) if (
                     self.root / name

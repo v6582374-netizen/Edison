@@ -152,3 +152,45 @@ def test_repeated_disconnect_keeps_the_inflight_platform_revocation_result(web, 
             release.set()
         assert first.result()['result']['disconnection']['google']=='revoked'
     assert web('connection.status')['result']['disconnection']['google']=='revoked'
+
+
+@pytest.mark.parametrize("operation", ["connection.refresh_subscriptions", "connection.import_authorization"])
+def test_disconnect_during_subscription_page_one_prevents_page_two(web, monkeypatch, operation):
+    import io
+    import json
+    from urllib.parse import parse_qs, urlsplit
+
+    entered, release = Event(), Event()
+    queries = []
+    block = Event()
+    def google(request, timeout=30):
+        parsed = urlsplit(request.full_url)
+        if parsed.path == '/revoke':
+            result=io.BytesIO(b'')
+            result.status=200
+            return result
+        if parsed.path == '/token':
+            return io.BytesIO(json.dumps({'access_token':'access','expires_in':3600}).encode())
+        assert parsed.path.endswith('/subscriptions')
+        queries.append(parse_qs(parsed.query))
+        if block.is_set() and 'pageToken' not in queries[-1]:
+            entered.set()
+            assert release.wait(3)
+            return io.BytesIO(json.dumps({'items':[],'nextPageToken':'late-next-page'}).encode())
+        return io.BytesIO(b'{"items":[]}')
+    monkeypatch.setattr('youtube_strataread.workbench.connection.urlopen', google)
+    monkeypatch.setattr('youtube_strataread.workbench.youtube_api.urlopen', google)
+    assert web('connection.import_authorization',client_id='client',client_secret='secret',refresh_token='refresh')['ok']
+    queries.clear()
+    block.set()
+    with ThreadPoolExecutor() as pool:
+        arguments = dict(client_id='client',client_secret='secret',refresh_token='refresh') if operation.endswith('import_authorization') else {}
+        pending=pool.submit(web,operation,**arguments)
+        assert entered.wait(2)
+        try:
+            assert not web('connection.disconnect')['result']['authorized']
+        finally:
+            release.set()
+        assert not pending.result()['ok']
+    assert len(queries)==1
+    assert 'pageToken' not in queries[0]

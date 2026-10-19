@@ -89,7 +89,7 @@ class GoogleOAuth(Protocol):
         refresh_token: str,
     ) -> OAuthCredentials: ...
 
-    def list_subscriptions(self, credentials: OAuthCredentials, *, grant_check: bool = False) -> list[SubscriptionSource]: ...
+    def list_subscriptions(self, credentials: OAuthCredentials, *, grant_check: bool = False, before_request: Callable[[], None] | None = None) -> list[SubscriptionSource]: ...
 
 
 class OfficialConnectionError(ConnectionError):
@@ -166,7 +166,7 @@ class GoogleOAuthGateway:
             expires_at=refreshed.expires_at,
         )
 
-    def list_subscriptions(self, credentials: OAuthCredentials, *, grant_check: bool = False) -> list[SubscriptionSource]:
+    def list_subscriptions(self, credentials: OAuthCredentials, *, grant_check: bool = False, before_request: Callable[[], None] | None = None) -> list[SubscriptionSource]:
         sources: list[SubscriptionSource] = []
         page_token: str | None = None
         seen_page_tokens: set[str] = set()
@@ -182,6 +182,8 @@ class GoogleOAuthGateway:
                     raise ConnectionError("YouTube subscriptions response repeated a page token")
                 seen_page_tokens.add(page_token)
                 query["pageToken"] = page_token
+            if before_request is not None:
+                before_request()
             payload = self.api.get('subscriptions', query, credentials.access_token, grant_check=grant_check)
             if not isinstance(payload, dict):
                 raise ConnectionError("YouTube subscriptions response was invalid")
@@ -397,7 +399,7 @@ class ConnectionService:
                 with self._publication(generation):
                     pass
                 # Prove the supplied client/grant pairing before replacing a working connection.
-                sources = self.oauth.list_subscriptions(credentials, grant_check=True)
+                sources = self._list_subscriptions(credentials, generation, grant_check=True)
                 with self._publication(generation):
                     self.vault.save_many({_CLIENT_ID: client_id, _CLIENT_SECRET: client_secret,
                         _ACCESS_TOKEN: credentials.access_token, _REFRESH_TOKEN: credentials.refresh_token or "",
@@ -501,12 +503,12 @@ class ConnectionService:
             try:
                 credentials = self._active_credentials(generation)
                 try:
-                    sources = self.oauth.list_subscriptions(credentials)
+                    sources = self._list_subscriptions(credentials, generation)
                 except AuthorizationRequired:
                     # A server-rejected access token gets one silent refresh, not
                     # an immediate browser prompt. A second rejection needs login.
                     credentials = self._active_credentials(generation, force_refresh=True)
-                    sources = self.oauth.list_subscriptions(credentials)
+                    sources = self._list_subscriptions(credentials, generation)
                 with self._publication(generation):
                     self.workspace.replace_subscription_sources(sources)
                     self._connected(True)
@@ -555,6 +557,19 @@ class ConnectionService:
             except ConnectionError as error:
                 self._failed(error, generation)
                 raise
+
+    def _list_subscriptions(self, credentials, generation, *, grant_check=False):
+        def permitted():
+            with self._publication(generation):
+                pass
+
+        permitted()
+        options = {"grant_check": True} if grant_check else {}
+        if isinstance(self.oauth, GoogleOAuthGateway):
+            # Each page is a new use of the bearer. A fence only after the whole
+            # response would still allow late page tokens to spend a withdrawn grant.
+            options["before_request"] = permitted
+        return self.oauth.list_subscriptions(credentials, **options)
 
     def subscription_sources(self) -> list[dict[str, str | None]]:
         return self.workspace.subscription_sources()
