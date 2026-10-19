@@ -73,14 +73,22 @@ latency; actual call counts, input hashes and manuscript versions establish work
 advancement, rather than treating sleep as busy-work evidence. Four A-B-B-A
 blocks each exclude ten warmups and collect fifty client action-to-render samples
 with a fresh documents.get per opening and two animation frames after content.
-The client uses its normal browser fetch/token/CORS transport directly; Node
-route.fetch is not in the measured request path. Each opening records its actual
+Protocol `browser-direct-all-http-v3` uses browser fetch/token/CORS transport
+for reading, workload setup/regeneration and all native control operations.
+Neither Node route.fetch nor APIRequestContext forwards measurement requests.
+Each run has a distinct identifier; earlier protocols and incomplete runs must
+not be pooled into a new run. Each opening records its actual
 request count (development StrictMode can issue two effect reads). Use the same
 production frontend build for both arms when interpreting production reading.
 A sidecar `.events.jsonl` preserves every render sample and transport failure;
 partial output is marked incomplete and never supplies an accepted P95. No
 measurement-only network retry hides failures.
-Native maintenance arms use actual screenshot reads every 1.2 seconds. Raw
+Native maintenance arms request a full PNG frame every 1.2 seconds with at most
+one screenshot operation outstanding. The browser receives and decodes the frame,
+checks dimensions and records encoded length and decoded PNG byte count; image
+contents are not persisted. This measures transfer and image decoding, not screen
+painting. Native operation records include actual screenshot start intervals,
+network/decode/total latency, elapsed time and operation failures. Raw
 per-block times, startup latency, calls/versions, queue status and observed launch
 admission are written out. The launch-admission probe never starts a second
 browser or creates artificial host pressure.

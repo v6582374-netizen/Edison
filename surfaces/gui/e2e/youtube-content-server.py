@@ -155,8 +155,7 @@ if measurement:
         elif operation == "close":
             native.close()
         elif operation == "screen":
-            frame = native.command("screen", {})
-            return {"width":frame['width'],"height":frame['height']}
+            return native.command("screen", {})
         elif operation == "admission":
             try:
                 ResourceGovernor().require_browser_start()
