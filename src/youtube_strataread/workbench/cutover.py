@@ -139,17 +139,28 @@ class CutoverHold:
         except Exception:
             failed = True
         with self._lock:
-            self._drain_closing = False
-            self.status()  # Closing cannot extend the original attempt deadline.
-            if failed:
+            try:
+                self.status()  # Closing cannot extend the original attempt deadline.
+                if failed:
+                    self._drain_failed = True
+                    self._state.update(state="aborted", reason="浏览器写者尚未确认退出；采集保持暂停，请检查服务。")
+                elif self._active == 0 and self._generation == generation:
+                    self._state["drained"] = True
+                    if self._state["state"] != "aborted":
+                        self._state.update(state="ready", reason="在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。")
+                self._save()
+            except Exception:
+                # The original durable hold remains authoritative on restart.
+                # Report the storage fault without requiring another write to
+                # the same failing storage or exposing a false ready state.
                 self._drain_failed = True
-                self._state.update(state="aborted", reason="浏览器写者尚未确认退出；采集保持暂停，请检查服务。")
-            elif self._active == 0 and self._generation == generation:
-                self._state["drained"] = True
-                if self._state["state"] != "aborted":
-                    self._state.update(state="ready", reason="在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。")
-            self._save()
-            self._condition.notify_all()
+                self._state.update(held=True, state="aborted", drained=False,
+                                   reason="切换收尾状态无法保存；采集保持暂停，请修复存储后检查服务。")
+            finally:
+                # Completion notification is a lifecycle obligation even when
+                # deadline publication or the final durable write fails.
+                self._drain_closing = False
+                self._condition.notify_all()
 
 
 @contextmanager

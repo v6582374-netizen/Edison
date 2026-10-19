@@ -487,7 +487,8 @@
     "30 分钟内未完成安全收尾与正式验证，已中止切换；在途工作继续保存，采集保持暂停。": "The 30-minute deadline expired before safe drain and formal verification finished. Active work can still save; acquisition remains paused.",
     "正在保存用户最新操作，等待写者结束。": "Saving your latest changes and waiting for writers to finish.",
     "浏览器写者尚未确认退出；采集保持暂停，请检查服务。": "Browser writer exit could not be confirmed. Acquisition remains paused; check the service.",
-    "在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。": "Active results are saved and acquisition workers and connection writers have stopped. Formal verification is still required; acquisition remains paused."
+    "在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。": "Active results are saved and acquisition workers and connection writers have stopped. Formal verification is still required; acquisition remains paused.",
+    "切换收尾状态无法保存；采集保持暂停，请修复存储后检查服务。": "Cutover completion could not be saved. Acquisition remains paused; repair storage and check the service."
   },
   "boot": {
     "starting": "Starting OpenWorker…",

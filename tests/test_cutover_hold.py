@@ -85,3 +85,62 @@ def test_legacy_dispatch_rejects_new_work_even_without_live_server(tmp_path):
                             reopened, connection, discovery, library)
     assert not result['ok']
     assert '切换暂停' in result['error']
+
+
+@pytest.mark.parametrize('deadline_expired', [False, True])
+def test_storage_failure_during_drain_wakes_shutdown_and_never_reports_ready(tmp_path, monkeypatch, deadline_expired):
+    import sqlite3
+
+    workspace = LocalWorkspace.open(tmp_path)
+    clock = [1000.0]
+    workspace.now = lambda: clock[0]
+    hold = CutoverHold(workspace)
+    entered, release, waiting, finished = (threading.Event() for _ in range(4))
+
+    def close_browser():
+        entered.set()
+        assert release.wait(3)
+
+    def wait_for_shutdown():
+        waiting.set()
+        hold.wait_idle()
+        finished.set()
+
+    hold.begin(threading.Event())
+    hold.observe_drain((), close_browser)
+    assert entered.wait(2)
+    waiter = threading.Thread(target=wait_for_shutdown, daemon=True)
+    waiter.start()
+    assert waiting.wait(2)
+    assert not finished.wait(.05)
+    real_connect = sqlite3.connect
+
+    def read_only_storage(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        connection.execute('PRAGMA query_only = ON')
+        return connection
+
+    try:
+        with monkeypatch.context() as fault:
+            # Fail at the real SQLite storage boundary, after the hold was
+            # durably admitted and while shutdown waits for browser completion.
+            fault.setattr(sqlite3, 'connect', read_only_storage)
+            if deadline_expired:
+                clock[0] = 2800.0
+            release.set()
+            assert finished.wait(2), 'completed drain stranded a shutdown waiter'
+            state = hold.status()
+            assert state['state'] == 'aborted'
+            assert state['held'] and not state['drained']
+            assert '保存' in state['reason']
+            with pytest.raises(CutoverBlocked), hold.work():
+                pass
+    finally:
+        release.set()
+        # Clean up the intentionally stranded waiter on the red version.
+        with hold.work(withdrawal=True):
+            pass
+        waiter.join(2)
+    restarted = CutoverHold(LocalWorkspace.open(tmp_path))
+    assert restarted.status()['held']
+    assert restarted.status()['state'] == 'aborted'
