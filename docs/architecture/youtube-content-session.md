@@ -48,6 +48,13 @@ shared source file. Response Cookie changes are discarded on completion.
 Caption acquisition runs in a fresh Python subprocess. Typed private-pipe events
 let the host retain request pacing, cooldown, metadata and commencement checks;
 worker-local downloader retries are disabled through the existing request policy.
+The worker keeps its JSON channel on a separate non-inheritable descriptor and
+redirects incidental standard output to the null device before acquisition.
+This discards yt-dlp progress, Python prints, raw descriptor writes and descendant
+output without recording external diagnostics; stderr remains discarded by the
+host. `quiet=True` alone does not suppress yt-dlp download progress and is not a
+protocol boundary. Local HTTP subtitle regression tests exercise the real yt-dlp
+download path, metadata/commencement acknowledgements and complete result delivery.
 
 A content check uses a supplied video URL and always obtains a new response. It
 never reads a retained transcript. Only identity-matched, parseable, nonempty
