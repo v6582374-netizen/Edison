@@ -29,6 +29,8 @@ export type Source = {
 };
 export type Preferences = { sources: Source[]; excluded_channels: string[]; last_synced_at?: number | null; sync_error?: string; reconnect_required?: boolean };
 export type Connection = {
+  managed_content?: boolean;
+  disconnection?: { local: string; google: string };
   configured: boolean;
   authorized: boolean;
   subscription_count: number;

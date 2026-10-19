@@ -16,6 +16,10 @@ for event in [{'event':'video'}, {'event':'request'}, {'event':'subtitles','info
     print(json.dumps(event), flush=True)
     assert sys.stdin.readline()
 mode = (root / 'caption-mode').read_text() if (root / 'caption-mode').exists() else 'good'
+if mode == 'hold':
+    import time
+    (root / 'caption-held').write_text(str(os.getpid()))
+    time.sleep(30)
 if mode in {'network','user','unknown'}:
     print(json.dumps({'event':'error', 'kind':mode}), flush=True)
 else:

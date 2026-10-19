@@ -83,7 +83,8 @@ class YtDlpCaptions:
     def fetch_snapshot(self, url, path, *, before_subtitles=None):
         from youtube_strataread.workbench.caption_process import CaptionProcess
         return CaptionProcess().acquire(url, path, requests=self.requests,
-            on_metadata=self.on_metadata, before_subtitles=before_subtitles)
+            on_metadata=self.on_metadata, before_subtitles=before_subtitles,
+            can_use=path.exists)
 
 
 class ConfiguredManuscripts:

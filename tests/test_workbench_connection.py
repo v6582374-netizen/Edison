@@ -35,6 +35,9 @@ class MemoryVault:
 class FakeGoogleOAuth:
     subscriptions: list[SubscriptionSource]
 
+    def revoke(self, token: str) -> None:
+        assert token == "long-lived"
+
     def authorize(self, configuration: OAuthClientConfiguration) -> OAuthCredentials:
         assert configuration.client_id == "desktop-client"
         return OAuthCredentials(access_token="short-lived", refresh_token="long-lived")
@@ -75,7 +78,8 @@ def test_connection_configuration_and_authorization_imports_subscription_sources
         "subscription_count": 2,
     }
     assert {key: value for key, value in disconnected.as_result().items() if key != "subscription_capability"} == {
-        "configured": True,
+        "configured": False,
+        "disconnection": {"local": "cleared", "google": "revoked"},
         "authorized": False,
         "subscription_count": 2,
     }

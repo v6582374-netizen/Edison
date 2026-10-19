@@ -123,3 +123,27 @@ _run()
         assert "sensitive-external-diagnostic" not in captured.out + captured.err
     finally:
         server.shutdown()
+
+
+def test_withdrawn_snapshot_stops_inflight_caption_process(tmp_path):
+    import os
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    worker = tmp_path / 'waiting.py'
+    marker = tmp_path / 'worker-pid'
+    worker.write_text('import os,sys,time\nfrom pathlib import Path\nsys.stdin.readline()\nPath(sys.argv[1]).write_text(str(os.getpid()))\ntime.sleep(60)\n')
+    withdrawn = Event()
+    with ThreadPoolExecutor() as pool:
+        running = pool.submit(CaptionProcess([sys.executable, str(worker), str(marker)]).acquire,
+            'https://www.youtube.com/watch?v=abcdefghijk', tmp_path / 'cookies',
+            can_use=lambda: not withdrawn.is_set())
+        deadline = time.monotonic()+3
+        while not marker.exists() and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert marker.exists()
+        withdrawn.set()
+        with pytest.raises(ContentSessionError, match='断开'):
+            running.result(timeout=3)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(marker.read_text()), 0)

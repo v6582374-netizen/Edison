@@ -130,6 +130,8 @@ class YouTubeWorkbench:
                 or content_root.resolve().is_relative_to(root.resolve())):
             raise ConnectionError("内容会话目录必须是资料库之外的稳定绝对路径。")
         self.content_session = ContentSession(content_root)
+        if self.managed_content:
+            self.connection.resume_disconnection(clear_content=self.content_session.clear)
         self.workspace.recover_interrupted_preparations()
         from youtube_strataread.workbench.manual import ManualVideoRequests
         self.manual = ManualVideoRequests(self.workspace, self.connection)
@@ -256,6 +258,17 @@ class YouTubeWorkbench:
             return self.workspace.save_summary(video_id, _bounded_summary(draft))
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.managed_content and capability in {
+            "session_cookies.replace", "session_cookies.test",
+            "connection.migrate_credentials", "connection.configure", "connection.authorize",
+        }:
+            return {"ok": False, "error": "此连接入口已退役，请刷新页面并使用新的 YouTube 连接入口。", "kind": "retired_entry"}
+        if capability == "connection.disconnect" and self.managed_content:
+            try:
+                result = self.connection.disconnect(clear_content=self.content_session.clear)
+                return {"ok": True, "result": result.as_result()}
+            except ConnectionError as error:
+                return {"ok": False, "error": str(error)}
         if capability.startswith("content_session."):
             from youtube_strataread.workbench.content_session import ContentSessionError
             try:
@@ -265,6 +278,8 @@ class YouTubeWorkbench:
                 elif not self.managed_content:
                     raise ContentSessionError("maintenance", "请先配置稳定的服务器内容会话目录并完成资源准入。")
                 elif operation == "open":
+                    if self.workspace.meta("youtube_disconnect_local") in {"pending", "failed"}:
+                        raise ContentSessionError("maintenance", "凭据清理尚未完成，请再次断开后再重新连接。")
                     result = self.content_session.open()
                 elif operation == "close":
                     result = self.content_session.close_browser()
@@ -529,4 +544,7 @@ def attach_youtube(app: FastAPI, manager: Any) -> None:
             workbench = start_youtube(app, manager)
         except ConnectionError as error:
             return {"ok": False, "error": str(error)}
-        return workbench.dispatch(request.capability, request.arguments)
+        result = workbench.dispatch(request.capability, request.arguments)
+        if result.get("ok") and request.capability.startswith("connection."):
+            result["result"]["managed_content"] = workbench.managed_content
+        return result

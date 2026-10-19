@@ -290,3 +290,37 @@ def test_profile_owner_remains_exclusive_after_browser_closes_during_extraction(
             release.set()
         assert checking.result()["state"] == "available"
     session.shutdown()
+
+
+def test_failed_browser_close_still_withdraws_content_permission(tmp_path):
+    class UncooperativeBrowser(Browser):
+        fail = False
+        def close(self):
+            if self.fail:
+                raise OSError('browser still stopping')
+            super().close()
+    browser = UncooperativeBrowser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / 'session', browser=browser)
+    session.open()
+    session.confirm('abcdefghijk', same_account=True,
+        fetch=lambda *args: SubtitleResult('abcdefghijk', 'T', 'en', False, SRT))
+    session.open()
+    with session.snapshot() as lease:
+        browser.fail = True
+        with pytest.raises(ContentSessionError):
+            session.clear()
+        with pytest.raises(ContentSessionError, match='清理'):
+            session.open()
+        with pytest.raises(ContentSessionError):
+            session.confirm('abcdefghijk', same_account=True, fetch=lambda *args: None)
+        with pytest.raises(ContentSessionError, match='旧请求'):
+            session.accept(lease, SubtitleResult('abcdefghijk', 'T', 'en', False, SRT), 'abcdefghijk')
+        with pytest.raises(ContentSessionError), session.snapshot():
+            pytest.fail('withdrawn credentials remain usable')
+    browser.fail = False
+    session.shutdown()
+    restarted = ContentSession(tmp_path / 'session', browser=Browser())
+    assert restarted.status()['state'] == 'disconnected'
+    assert not restarted.status()['snapshot_present']
+    restarted.shutdown()
