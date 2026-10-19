@@ -73,6 +73,13 @@ latency; actual call counts, input hashes and manuscript versions establish work
 advancement, rather than treating sleep as busy-work evidence. Four A-B-B-A
 blocks each exclude ten warmups and collect fifty client action-to-render samples
 with a fresh documents.get per opening and two animation frames after content.
+The client uses its normal browser fetch/token/CORS transport directly; Node
+route.fetch is not in the measured request path. Each opening records its actual
+request count (development StrictMode can issue two effect reads). Use the same
+production frontend build for both arms when interpreting production reading.
+A sidecar `.events.jsonl` preserves every render sample and transport failure;
+partial output is marked incomplete and never supplies an accepted P95. No
+measurement-only network retry hides failures.
 Native maintenance arms use actual screenshot reads every 1.2 seconds. Raw
 per-block times, startup latency, calls/versions, queue status and observed launch
 admission are written out. The launch-admission probe never starts a second
