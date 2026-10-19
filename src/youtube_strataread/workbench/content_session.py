@@ -169,6 +169,8 @@ class ContentSession:
                 yield
             except (ContentSessionError, OSError) as error:
                 safe = content_failure(error)
+                if safe.kind != "resource":
+                    self._open_pending = False
                 self.record_failure(safe)
                 raise safe from None
 
@@ -185,9 +187,12 @@ class ContentSession:
                     self._browser = ServerBrowser(owner_fd=self._owner.fileno())
                 try:
                     self._browser.start(self.root / "profile")
-                except ContentSessionError as error:
-                    if error.kind == "resource" and self.resources:
-                        self.resources.browser_released()
+                except BaseException as error:
+                    if isinstance(error, ContentSessionError) and error.kind == "resource":
+                        if self.resources:
+                            self.resources.browser_released()
+                    else:
+                        self._open_pending = False
                     raise
                 self._running = True
             self._open_pending = False

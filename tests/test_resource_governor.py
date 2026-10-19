@@ -110,3 +110,31 @@ def test_native_command_preserves_resource_exit_before_next_status_poll():
         assert error.value.kind == 'resource'
     finally:
         browser.close()
+
+
+@pytest.mark.parametrize("failure,expected_state", [
+    (ContentSessionError("maintenance", "浏览器安装不可用。"), "needs_maintenance"),
+    (ContentSessionError("user", "需要用户操作。"), "needs_user"),
+    (OSError("storage unavailable"), "needs_maintenance"),
+])
+def test_nonresource_start_failure_does_not_replay_human_open_on_heartbeat(tmp_path, failure, expected_state):
+    from youtube_strataread.workbench.content_session import ContentSession
+    class UnavailableBrowser:
+        starts = 0
+        def start(self, profile):
+            self.starts += 1
+            raise failure
+        def close(self):
+            pass
+    browser = UnavailableBrowser()
+    session = ContentSession(tmp_path/'content', browser=browser, resources=ResourceGovernor(
+        observe=lambda: ResourceObservation(2*1024**3, 0, 0, True)))
+    try:
+        with pytest.raises(ContentSessionError):
+            session.open()
+        session.tick(); session.tick()
+        assert not session.status()['browser_pending']
+        assert browser.starts == 1
+        assert session.status()['state'] == expected_state
+    finally:
+        session.shutdown()
