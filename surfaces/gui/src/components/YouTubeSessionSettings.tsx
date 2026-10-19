@@ -132,7 +132,7 @@ export function YouTubeSessionSettings() {
       <button className={button} disabled={!!busy || viewPaused || !sameAccount || !status?.browser_running || !videoUrl.trim()} onClick={() => void run("confirm")}>{busy === "confirm" ? "正在检查字幕…" : "完成登录并检查字幕"}</button>
       <button className={button} disabled={!!busy || !!networkError || !status?.snapshot_present || !videoUrl.trim()} onClick={() => void run("verify")}>{busy === "verify" ? "正在获取字幕…" : "重新实际获取字幕"}</button>
     </div>
-    <p className="text-[12px] text-muted">检查时会关闭服务器浏览器以读取登录状态，再实际获取此视频的字幕。需要继续登录时可重新打开；检查不会为此视频生成文稿。</p>
+    <p className="text-[12px] text-muted">检查时会关闭服务器浏览器并保存当前会话，再实际获取此视频的字幕。需要继续登录时可重新打开；检查不会为此视频生成文稿。</p>
     {status?.last_success_at && <p className="text-[12px] text-muted">最近字幕成功：{new Date(status.last_success_at * 1000).toLocaleString()}</p>}
   </section>;
 }
