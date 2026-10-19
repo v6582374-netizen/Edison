@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
@@ -109,9 +110,10 @@ class PreparationService:
         if isinstance(error, YouTubeRequestsStopped):
             self.workspace.set_preparation_state(video_id, "queued")
             return True
-        limited = rate_limit_error(error)
+        limited = rate_limit_error(error, now=self.workspace.now())
         if limited is None:
             return False
+        self.workspace.record_acquisition_failure(video_id, "rate_limited")
         self.workspace.youtube_requests.limit(limited)
         self.workspace.defer_rate_limited(video_id, attempted=limited.response_received)
         return True
@@ -124,9 +126,16 @@ class PreparationService:
 
     def _defer_caption(self, video_id: str, error: Exception) -> bool:
         failure = classify_caption(error, self.workspace.now())
+        self.workspace.record_acquisition_failure(video_id, failure.category or failure.kind)
+        if failure.kind in {"fatal", "caption_pending"}:
+            self.workspace.youtube_requests.probe_unproven()
         if failure.kind == "fatal":
             return False
-        self.workspace.defer_retry(video_id, failure)
+        if failure.kind == "transient":
+            until = self.workspace.youtube_requests.network_failed(failure.reason, failure.retry_at)
+            self.workspace.defer_retry(video_id, Failure(failure.kind, failure.reason, until), charge=False)
+        else:
+            self.workspace.defer_retry(video_id, failure)
         return True
 
     def request_drain_pause(self) -> dict[str, object]:
@@ -144,6 +153,21 @@ class PreparationService:
             asset = self.workspace.claim_next_queued_asset(self.model_account)
         if asset is None:
             return False
+        needs_acquisition = not self.workspace.retained_transcript(str(asset["video_id"]))
+        context = self.workspace.youtube_requests.acquisition() if needs_acquisition else nullcontext()
+        try:
+            with context:
+                try:
+                    return self._prepare_claimed(asset)
+                finally:
+                    if needs_acquisition:
+                        self.workspace.youtube_requests.probe_unproven()
+        except Exception as error:
+            if self._defer_request(str(asset["video_id"]), error):
+                return True
+            raise
+
+    def _prepare_claimed(self, asset: dict[str, object]) -> bool:
         video_id = str(asset["video_id"])
         timing = self.workspace.asset(video_id)
         completed_event = timing['timing_status'] == 'event' and timing['completion_status'] == 'ended'
@@ -160,7 +184,7 @@ class PreparationService:
                 self.workspace.await_video_timing(video_id)
                 return True
             except Exception as error:
-                if self._defer_request(video_id, error):
+                if self._defer_request(video_id, error) or self._defer_caption(video_id, error):
                     return True
                 # An unavailable detector is uncertainty, never permission to generate.
                 is_short = None
@@ -173,6 +197,7 @@ class PreparationService:
                 srt_text = retained["content"]
                 source_language = retained["language"]
             else:
+                acquisition_sequence = self.workspace.youtube_requests.snapshot().get("failure_sequence", 0)
                 if isinstance(self.captions, YtDlpCaptions):
                     def before_subtitles(info: dict[str, Any]) -> None:
                         if info.get('id') != video_id:
@@ -196,10 +221,12 @@ class PreparationService:
                 self.workspace.record_video_duration(video_id, subtitles.duration_seconds)
                 srt_text = subtitles.srt_text
                 source_language = subtitles.language
+                if not "\n".join(cues_to_lines(load_cues(srt_text))).strip():
+                    raise YouTubeError("字幕结果为空，尚无法确认原因；请检查内容访问状态。")
                 self.workspace.store_transcript(
                     video_id, language=subtitles.language, srt_text=srt_text
                 )
-                self.workspace.youtube_requests.caption_succeeded()
+                self.workspace.youtube_requests.caption_succeeded(observed_sequence=acquisition_sequence)
             transcript = "\n".join(cues_to_lines(load_cues(srt_text))).strip()
             if not transcript:
                 raise YouTubeError("subtitle was empty after cleanup")

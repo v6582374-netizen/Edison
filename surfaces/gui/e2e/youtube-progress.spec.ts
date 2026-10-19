@@ -67,7 +67,7 @@ test('failure explanations are distinct and the complete list is paginated', asy
   await expect(limited.locator('pre')).not.toBeVisible();
   await limited.getByText('技术详情', {exact: true}).click();
   await expect(limited.locator('pre')).toContainText('429');
-  await expect(queue.getByText(/没有可用字幕/).first()).toBeVisible();
+  await expect(queue.getByText(/获取原因待核实/).first()).toBeVisible();
   await queue.getByRole('button', {name: '下一页'}).click();
   await expect(queue.locator('li')).toHaveCount(2);
   await expect(queue.getByText('视频 51', {exact: true})).toBeVisible();

@@ -167,7 +167,9 @@ class YouTubeWorkbench:
         last_scan = 0.0
         while not self.stop.wait(.5):
             finished = float(self.workspace.meta('youtube_discovery_finished_at') or 0)
-            if finished > last_scan:
+            # A batch bounds one scheduling round, not the lifetime of recovery.
+            # Runnable work still rechecks permission, eligibility and service gates.
+            if finished > last_scan or self.batch.completed >= self.batch.limit:
                 self.batch.reset()
                 last_scan = finished
             try:

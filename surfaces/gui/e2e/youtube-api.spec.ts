@@ -5,7 +5,7 @@ import {join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import type {Page, APIRequestContext} from '@playwright/test';
 
-type Scenario = {hold_classification?: boolean; platform_pages?: boolean; channels?: string[]; videos?: {id: string; published: number; added?: number; channel?: string; kind?: string; claimed_publication?: number; live?: Record<string, string>; caption_status?: string; shorts?: boolean | null; listed?: boolean}[];
+type Scenario = {model_failure?: boolean; retry_after?: string; caption_failure?: string; hold_classification?: boolean; platform_pages?: boolean; channels?: string[]; videos?: {id: string; published: number; added?: number; channel?: string; kind?: string; claimed_publication?: number; live?: Record<string, string>; caption_status?: string; shorts?: boolean | null; listed?: boolean}[];
   global_failure?: string; failure_endpoint?: string; auth_failure?: boolean; channel_failure?: string; caption_cooldown?: boolean; more_pages?: boolean};
 async function harness(page: Page, request: APIRequestContext, scenario: Scenario, releaseModel = true) {
   const root = await mkdtemp(join(tmpdir(), 'edison-api-'));
@@ -28,10 +28,10 @@ async function harness(page: Page, request: APIRequestContext, scenario: Scenari
   url=`http://127.0.0.1:${port}`;
   await expect.poll(async()=>{try{return (await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
   };
-  const stop = async () => {
+  const stop = async (signal: NodeJS.Signals = 'SIGKILL') => {
     if (backend.exitCode === null) {
       const exited = new Promise<void>(done => backend.once('exit', () => done()));
-      backend.kill('SIGKILL');
+      backend.kill(signal);
       await exited;
     }
   };
@@ -342,4 +342,126 @@ test('event classification does not grant commencement before the 72-hour window
     await page.getByRole('region', {name:'处理队列',exact:true}).getByRole('button', {name:/^已过期/}).click();
     await expect(page.getByText('crossingE01', {exact:true})).toBeVisible();
   } finally {await app.close();}
+});
+
+
+for (const fault of ['network','rate']) test(`shared caption recovery ${fault} survives three retries and resumes without manual retry`,async({page,request})=>{
+  test.setTimeout(90000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:fault,retry_after:new Date((now+2400)*1000).toUTCString(),videos:[{id:'waiting-one',published:now-30},{id:'waiting-two',published:now-30}]};
+  const app=await harness(page,request,scenario);
+  const calls=async()=>{try{return (await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));}catch{return [];}};
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await calls()).length).toBe(1);
+    await page.waitForTimeout(1200);
+    expect((await calls()).length).toBe(1);
+    let deadline=(await calls())[0].at;
+    for(const delay of fault === 'network' ? [600,1200,2400,21600] : [2400,1800,3600,21600]) {
+      const activity=await app.call('activity.snapshot');
+      expect(activity.youtube_requests.cooldown_until).toBe(deadline+delay);
+      expect(activity.failed).toBe(0);
+      deadline+=delay;
+      const count=(await calls()).length;
+      await app.clock(deadline);
+      await expect.poll(async()=>(await calls()).length).toBe(count+1);
+    }
+    await app.stop(fault === 'network' ? 'SIGTERM' : 'SIGKILL');await app.start();
+    const state=await app.call('activity.snapshot');
+    expect(state.youtube_requests.cooldown_until).toBe(deadline+21600);
+    await app.scenario({...scenario,caption_failure:undefined});
+    await app.clock(deadline+21600);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready,{timeout:20000}).toBe(2);
+  }finally{await app.close();}
+});
+
+
+test('confirmed caption absence yields and ends at 24 hours until explicit retry',async({page,request})=>{
+  test.setTimeout(90000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:'absent',videos:[{id:'absent-one',published:now-30},{id:'healthy-two',published:now-30}]};
+  const app=await harness(page,request,scenario);
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
+    const items=async()=>(await app.call('activity.list',{state:'waiting_retry'})).items;
+    await expect.poll(async()=>(await items()).length).toBe(1);
+    await page.getByRole('button',{name:/等待重试/}).click({timeout:5000});
+    await expect(page.getByRole('region',{name:'处理队列',exact:true})).toContainText('下一次检查');
+    const first=(await items())[0].retry_at-3600;
+    expect(first).toBe(app.now);
+    await app.clock(first+3600);
+    await expect.poll(async()=>(await items())[0]?.retry_at).toBe(first+21600);
+    await app.stop();await app.start();
+    expect((await items())[0].retry_at).toBe(first+21600);
+    await app.clock(first+21600);
+    await expect.poll(async()=>(await items())[0]?.retry_at).toBe(first+86400);
+    await app.clock(first+86400);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).failed).toBe(1);
+    await app.scenario({...scenario,caption_failure:undefined});
+    await app.clock(first+172800);
+    await page.waitForTimeout(1200);
+    expect((await app.call('activity.snapshot')).ready).toBe(1);
+    await app.call('activity.retry',{video_id:'absent-one'});
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(2);
+  }finally{await app.close();}
+});
+
+
+test('exhausted host batch resumes caption checks with official discovery blocked',async({page,request})=>{
+  test.setTimeout(150000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:'absent-all',channels:['alpha','beta'],
+    videos:Array.from({length:100},(_,i)=>({id:`batch-${i}`,channel:i<50?'alpha':'beta',published:now-30}))};
+  const app=await harness(page,request,scenario);
+  try {
+    await app.call('collection.refresh_updates');
+    await app.scenario({...scenario,global_failure:'authorization'});
+    await app.call('collection.refresh_updates');
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).waiting_retry,{timeout:90000}).toBe(100);
+    expect((await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n')).toHaveLength(100);
+    const count=(await app.requests()).length;
+    await app.scenario({...scenario,caption_failure:undefined,global_failure:'authorization'});
+    await app.clock(app.now+3600);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready,{timeout:12000}).toBeGreaterThan(0);
+    expect((await app.requests()).length).toBe(count);
+  }finally{await app.close();}
+});
+
+
+test('model account waiting yields to subtitles and preserves transcripts through restart',async({page,request})=>{
+  test.setTimeout(60000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={model_failure:true,videos:[{id:'model-one',published:now-30},{id:'model-two',published:now-30}]};
+  const app=await harness(page,request,scenario);
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).waiting_retry).toBe(2);
+    expect((await readFile(join(app.root,'model-requests.jsonl'),'utf8')).trim().split('\n')).toHaveLength(1);
+    expect((await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n')).toHaveLength(2);
+    await app.stop();await app.start();
+    await app.call('activity.snapshot');
+    await app.scenario({...scenario,model_failure:undefined,global_failure:'quota'});
+    await app.clock(app.now+1200);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).ready,{timeout:12000}).toBe(2);
+    expect((await readFile(join(app.root,'caption-requests.jsonl'),'utf8')).trim().split('\n')).toHaveLength(2);
+  }finally{await app.close();}
+});
+
+
+test('unknown empty captions and access failures never become caption availability waiting',async({page,request})=>{
+  test.setTimeout(45000);
+  const now=Math.floor(Date.now()/1000);
+  const scenario: Scenario={caption_failure:'terminal',videos:['private','deleted','denied','unknown'].map(id=>({id,published:now-30}))};
+  const app=await harness(page,request,scenario);
+  try {
+    await app.toggle(true);
+    await expect.poll(async()=>(await app.call('activity.snapshot')).unavailable).toBe(4);
+    const items=(await app.call('activity.list',{state:'unavailable'})).items;
+    expect(Object.fromEntries(items.map((item: any)=>[item.video_id,item.acquisition_failure_kind]))).toEqual({private:'private',deleted:'deleted',denied:'access_denied',unknown:'unknown'});
+    expect((await app.call('activity.snapshot')).waiting_retry).toBe(0);
+    await page.getByRole('button',{name:/暂不可用/}).click();
+    await expect(page.getByRole('region',{name:'处理队列',exact:true})).toContainText('获取原因待核实');
+  }finally{await app.close();}
 });

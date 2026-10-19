@@ -16,8 +16,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from youtube_strataread.downloader.request_policy import (
+    ConfirmedCaptionAbsence,
     YouTubeError,
     YouTubeRequestPolicy,
     rate_limit_error,
@@ -62,6 +64,22 @@ def youtube_cookie_file() -> Path | None:
 
 
 def download_subtitles(
+    url: str, preferred_lang: str | None = None, *,
+    cookies_from_browser: str | None = None, cookiefile: Path | None = None,
+    request_policy: YouTubeRequestPolicy | None = None,
+    on_metadata: Callable[[str, float | None], None] | None = None,
+    before_subtitles: Callable[[dict], None] | None = None,
+) -> SubtitleResult:
+    from contextlib import nullcontext
+
+    with request_policy.acquisition() if request_policy else nullcontext():
+        return _download_subtitles(
+            url, preferred_lang, cookies_from_browser=cookies_from_browser,
+            cookiefile=cookiefile, request_policy=request_policy,
+            on_metadata=on_metadata, before_subtitles=before_subtitles)
+
+
+def _download_subtitles(
     url: str,
     preferred_lang: str | None = None,
     *,
@@ -111,7 +129,7 @@ def download_subtitles(
             try:
                 return super().urlopen(request)
             except Exception as error:
-                limited = rate_limit_error(error)
+                limited = rate_limit_error(error, now=request_policy.now() if request_policy else None)
                 if limited:
                     raise (request_policy.limit(limited) if request_policy else limited) from error
                 raise
@@ -133,7 +151,7 @@ def download_subtitles(
         with PacedYoutubeDL(probe_opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except DownloadError as e:
-        limited = rate_limit_error(e)
+        limited = rate_limit_error(e, now=request_policy.now() if request_policy else None)
         if limited:
             raise (request_policy.limit(limited) if request_policy else limited) from e
         raise YouTubeError(_format_ytdlp_error(str(e))) from e
@@ -155,9 +173,13 @@ def download_subtitles(
 
     lang, is_auto = _pick_language(subs, auto, preferred_lang)
     if lang is None:
-        raise YouTubeError(
-            "no subtitles (official, auto-generated, or live_chat fallback) were available for this video"
-        )
+        parsed = urlsplit(url)
+        requested_id = parse_qs(parsed.query).get("v", [parsed.path.rstrip("/").split("/")[-1]])[0]
+        if (video_id == requested_id and info.get("availability") in {"public", "unlisted"} and info.get("formats")
+                and video_id and video_id != "None" and not info.get("is_live")
+                and info.get("live_status") not in {"is_live", "is_upcoming"}):
+            raise ConfirmedCaptionAbsence("可访问视频尚未提供字幕。")
+        raise YouTubeError("字幕结果为空，尚无法确认原因；请检查内容访问状态。")
 
     downloading_subtitles = True
     # --- phase 2: download just that one language --------------------------
@@ -181,7 +203,7 @@ def download_subtitles(
             with PacedYoutubeDL(dl_opts) as ydl:
                 ydl.process_ie_result(info, download=True)
         except DownloadError as e:
-            limited = rate_limit_error(e)
+            limited = rate_limit_error(e, now=request_policy.now() if request_policy else None)
             if limited:
                 raise (request_policy.limit(limited) if request_policy else limited) from e
             raise YouTubeError(_format_ytdlp_error(str(e))) from e
