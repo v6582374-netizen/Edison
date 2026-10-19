@@ -1,4 +1,4 @@
-"""Private-pipe browser driver with an authenticated Web remote view.
+"""Ordinary native browser with a private authenticated remote desktop view.
 
 The subprocess is the only Chromium profile writer. No debugging/VNC port is
 opened, and neither screenshots nor input are persisted or logged. Its process
@@ -7,7 +7,6 @@ group is the lifecycle boundary for the resource governor to constrain.
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import json
 import os
@@ -92,6 +91,8 @@ class ServerBrowser:
                 kind,
                 "请在服务器 YouTube 页面完成登录及站点交接。"
                 if kind == "user"
+                else "浏览器操作参数无效，请刷新画面后重试。"
+                if kind == "unknown"
                 else "服务器浏览器操作失败，请检查浏览器安装、沙箱与存储权限。",
             )
         return result.get("result", {})
@@ -105,12 +106,19 @@ class ServerBrowser:
             )
             self.process.stdin.flush()
             return self._read(timeout=self.command_timeout)
+        except ContentSessionError as error:
+            if error.kind == "maintenance":
+                self.close()
+            raise
         except (BrokenPipeError, OSError):
             self.close()
             raise ContentSessionError("maintenance", "服务器浏览器连接已结束。") from None
 
     def snapshot(self):
-        return self.command("snapshot", {})["cookies"]
+        try:
+            return self.command("snapshot", {})["cookies"]
+        finally:
+            self.close()
 
     def close(self):
         process = self.process
@@ -120,7 +128,7 @@ class ServerBrowser:
             if process.poll() is None:
                 process.stdin.close()  # graceful browser/profile flush on EOF
                 with contextlib.suppress(subprocess.TimeoutExpired):
-                    process.wait(timeout=8)
+                    process.wait(timeout=20)
             # Includes orphaned Chromium descendants even if the driver exited.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
@@ -143,10 +151,35 @@ class ServerBrowser:
             self.process = None
 
 
-def _cookies(context):
+def profile_snapshot(profile):
+    """Read a stopped browser's own profile; never claim cookies prove login."""
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    class QuietLogger:
+        failed = False
+
+        def debug(self, *_, **kwargs):
+            pass
+
+        def info(self, message, **kwargs):
+            if "could not be decrypted" in message:
+                self.failed = True
+
+        def warning(self, *_, **kwargs):
+            self.failed = True
+
+        def error(self, *_, **kwargs):
+            self.failed = True
+
+    logger = QuietLogger()
+    jar = extract_cookies_from_browser("chrome", profile=str(profile), logger=logger)
+    if logger.failed:
+        raise ContentSessionError(
+            "maintenance", "浏览器会话读取不完整，请检查服务身份和系统密钥存储。"
+        )
     rows = ["# Netscape HTTP Cookie File"]
-    for cookie in context.cookies():
-        domain = cookie["domain"]
+    for cookie in jar:
+        domain = cookie.domain
         if not any(
             domain.lstrip(".") == allowed or domain.lstrip(".").endswith("." + allowed)
             for allowed in ("youtube.com", "google.com")
@@ -155,108 +188,166 @@ def _cookies(context):
         values = [
             domain,
             "TRUE" if domain.startswith(".") else "FALSE",
-            cookie["path"],
-            "TRUE" if cookie["secure"] else "FALSE",
-            str(max(0, int(cookie["expires"]))),
-            cookie["name"],
-            cookie["value"],
+            cookie.path,
+            "TRUE" if cookie.secure else "FALSE",
+            str(max(0, int(cookie.expires or 0))),
+            cookie.name,
+            cookie.value,
         ]
         if any("\t" in value or "\n" in value or "\r" in value for value in values):
-            continue
+            raise ContentSessionError("maintenance", "浏览器会话格式无法安全读取。")
         rows.append("\t".join(values))
+    if len(rows) == 1:
+        raise ContentSessionError("user", "请打开服务器浏览器并完成 YouTube 登录及站点交接。")
     return "\n".join(rows) + "\n"
 
 
-def _serve(profile, start_url, *, headless=False):
-    from urllib.parse import urlsplit
+def _serve(profile, start_url, runtime):
+    import shutil
 
-    from playwright.sync_api import sync_playwright
+    from youtube_strataread.workbench.session_desktop import (
+        Desktop,
+        close_native_windows,
+        wait_for_native_window,
+    )
 
     def reply(result=None, kind=None):
         print(json.dumps({"ok": kind is None, "result": result, "kind": kind}), flush=True)
 
-    os.umask(0o077)
-    with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            profile,
-            headless=headless,
-            chromium_sandbox=True,
-            viewport={"width": 1100, "height": 760},
-            executable_path=os.environ.get("EDISON_CONTENT_CHROMIUM") or None,
+    executable = os.environ.get("EDISON_CONTENT_CHROMIUM") or shutil.which("google-chrome-stable")
+    display_executable = os.environ.get("EDISON_CONTENT_X11VNC") or shutil.which("x11vnc")
+    if not executable or not display_executable:
+        raise RuntimeError("native browser dependencies unavailable")
+    browser = subprocess.Popen(
+        [
+            executable,
+            "--user-data-dir=" + str(profile),
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-dev-shm-usage",
+            "--window-position=0,0",
+            "--window-size=1100,760",
+            start_url,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    display = None
+    desktop = None
+    quit_requested = False
+
+    def stop_browser():
+        nonlocal quit_requested
+        if browser.poll() is None:
+            if desktop is None or quit_requested:
+                raise RuntimeError("desktop did not complete orderly close")
+            quit_requested = True
+            # Use the normal native window-manager close protocol. Keyboard
+            # shortcuts/omnibox navigation can race focus and input dispatch.
+            # Termination is emergency cleanup, never proof of profile flushing.
+            close_native_windows(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
+            browser.wait(timeout=15)
+        if browser.returncode != 0:
+            raise RuntimeError("browser exited unexpectedly")
+
+    try:
+        socket_path = runtime / "vnc.sock"
+        display = subprocess.Popen(
+            [
+                display_executable,
+                "-display",
+                os.environ["DISPLAY"],
+                "-auth",
+                os.environ["XAUTHORITY"],
+                "-unixsock",
+                str(socket_path),
+                "-rfbport",
+                "0",
+                "-forever",
+                "-shared",
+                "-noxdamage",
+                "-nopw",
+                "-quiet",
+                "-noclipboard",
+                "-nosetclipboard",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
+        deadline = time.monotonic() + 10
+        while not socket_path.exists():
+            if (
+                browser.poll() is not None
+                or display.poll() is not None
+                or time.monotonic() >= deadline
+            ):
+                raise RuntimeError("native desktop failed")
+            time.sleep(0.05)
+        desktop = Desktop(socket_path)
+        wait_for_native_window(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
         reply()
+        for line in sys.stdin:
+            try:
+                payload = json.loads(line)
+                command, args = payload["command"], payload.get("arguments", {})
+                if browser.poll() is not None:
+                    raise RuntimeError("browser exited")
+                if command == "screen":
+                    reply(desktop.screen())
+                elif command == "click":
+                    desktop.click(args["x"], args["y"])
+                    reply()
+                elif command == "text":
+                    desktop.text(args["text"])
+                    reply()
+                elif command == "key":
+                    desktop.key(args["key"])
+                    reply()
+                elif command == "scroll":
+                    desktop.scroll(args["delta"])
+                    reply()
+                elif command == "youtube":
+                    desktop.navigate("https://www.youtube.com/")
+                    reply()
+                elif command == "snapshot":
+                    stop_browser()
+                    reply({"cookies": profile_snapshot(profile)})
+                    break
+                else:
+                    raise ValueError("unsupported command")
+            except ContentSessionError as error:
+                reply(kind=error.kind)
+                if command == "snapshot":
+                    break
+            except (ValueError, KeyError, TypeError, OverflowError):
+                reply(kind="unknown")
+                if command == "snapshot":
+                    break
+            except Exception:
+                # A truncated/invalid/timed-out RFB stream is permanently
+                # poisoned. Retire the entire driver before another request.
+                reply(kind="maintenance")
+                break
+    finally:
         try:
-            for line in sys.stdin:
-                try:
-                    payload = json.loads(line)
-                    command, args = payload["command"], payload.get("arguments", {})
-                    live = [item for item in context.pages if not item.is_closed()]
-                    page = live[-1] if live else context.new_page()
-                    if command == "screen":
-                        reply(
-                            {
-                                "image": base64.b64encode(page.screenshot(type="png")).decode(),
-                                "width": 1100,
-                                "height": 760,
-                                "origin": urlsplit(page.url).netloc,
-                            }
-                        )
-                    elif command == "click":
-                        x, y = float(args["x"]), float(args["y"])
-                        if not (0 <= x <= 1100 and 0 <= y <= 760):
-                            raise ValueError("bounds")
-                        page.mouse.click(x, y)
-                        reply()
-                    elif command == "text":
-                        value = args["text"]
-                        if not isinstance(value, str) or len(value) > 4096:
-                            raise ValueError("text")
-                        page.keyboard.insert_text(value)
-                        reply()
-                    elif command == "key":
-                        key = args["key"]
-                        if key not in {
-                            "Enter",
-                            "Tab",
-                            "Shift+Tab",
-                            "Backspace",
-                            "Delete",
-                            "Escape",
-                            "ArrowLeft",
-                            "ArrowRight",
-                            "ArrowUp",
-                            "ArrowDown",
-                            "Home",
-                            "End",
-                            "ControlOrMeta+A",
-                        }:
-                            raise ValueError("key")
-                        page.keyboard.press(key)
-                        reply()
-                    elif command == "scroll":
-                        delta = max(-760, min(760, float(args["delta"])))
-                        page.mouse.wheel(0, delta)
-                        reply()
-                    elif command == "youtube":
-                        page.goto("https://www.youtube.com/", wait_until="domcontentloaded")
-                        reply()
-                    elif command == "snapshot":
-                        host = urlsplit(page.url).hostname
-                        signed_in = host in {"www.youtube.com", "youtube.com"} and page.evaluate(
-                            "() => !!(window.ytcfg && window.ytcfg.get('LOGGED_IN'))"
-                        )
-                        if not signed_in:
-                            reply(kind="user")
-                        else:
-                            reply({"cookies": _cookies(context)})
-                    else:
-                        raise ValueError("command")
-                except Exception:
-                    reply(kind="maintenance")
+            stop_browser()
         finally:
-            context.close()
+            if browser.poll() is None:
+                browser.terminate()
+                try:
+                    browser.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    browser.kill()
+                    browser.wait(timeout=3)
+            if desktop is not None:
+                desktop.__exit__(None, None, None)
+            if display is not None:
+                display.terminate()
+                try:
+                    display.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    display.kill()
+                    display.wait(timeout=3)
 
 
 def _display(root):
@@ -268,7 +359,8 @@ def _display(root):
 
     @contextmanager
     def running():
-        runtime = Path(tempfile.mkdtemp(prefix="display-", dir=root))
+        # UNIX socket paths are short even when the stable profile path is long.
+        runtime = Path(tempfile.mkdtemp(prefix="edison-display-", dir="/tmp"))
         display = ":" + str(1000 + secrets.randbelow(50000))
         authority = runtime / "Xauthority"
         try:
@@ -311,7 +403,7 @@ def _display(root):
                         raise RuntimeError("display startup failed")
                     time.sleep(0.05)
                 os.environ.update(DISPLAY=display, XAUTHORITY=str(authority))
-                yield
+                yield runtime
             finally:
                 server.terminate()
                 try:
@@ -327,11 +419,10 @@ def _display(root):
 
 if __name__ == "__main__":
     try:
-        from contextlib import ExitStack
-
-        with ExitStack() as stack:
-            if sys.argv[3] != "headless" and sys.platform.startswith("linux"):
-                stack.enter_context(_display(Path(sys.argv[1]).parent))
-            _serve(sys.argv[1], sys.argv[2], headless=sys.argv[3] == "headless")
+        os.umask(0o077)
+        if sys.platform != "linux" or sys.argv[3] == "headless":
+            raise RuntimeError("native human handoff requires a Linux display")
+        with _display(Path(sys.argv[1]).parent) as runtime:
+            _serve(Path(sys.argv[1]), sys.argv[2], runtime)
     except Exception:
         print(json.dumps({"ok": False, "kind": "maintenance"}), flush=True)

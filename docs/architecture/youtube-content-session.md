@@ -7,22 +7,28 @@ service UID. Changing the UID is a maintenance error, not a sign-in instruction.
 A dedicated Chromium profile is the durable source. No prototype profile, desktop
 Cookie export, or production Cookie file is imported into this path.
 
-The Linux adapter starts headed, sandboxed Chromium and a private authenticated
-Xvfb display in one process group. The Web UI relays screenshot, pointer and
+The Linux adapter starts ordinary headed, sandboxed Chrome, a private authenticated
+Xvfb display and x11vnc in one process group. Its private UNIX RFB client forwards
+only explicit human input; it does not use Playwright, CDP, page scripting,
+automation fingerprints, or browser security-disable flags. The Web UI relays screenshot, pointer and
 keyboard operations over the existing authenticated capability endpoint. It
 opens no CDP, VNC, or other public browser listener. Screens and typed input are
 not persisted; handoff responses have `Cache-Control: no-store`. Operators must
 also keep request-body tracing disabled at reverse proxies and observability
 layers. Passwords and security challenges are completed by the person on the
-actual Google page, followed by the YouTube site sign-in. The screen origin is
-visible. Screenshot polling does not reset the 15-minute idle timer; user input
+actual Google page, followed by the YouTube site sign-in. The real browser address bar is
+visible; the application does not infer or report a page origin from pixels. Screenshot polling does not reset the 15-minute idle timer; user input
 does. Closing the Web page does not disconnect the content session.
 
 The person explicitly confirms that this connection and official authorization
 use the same Google account. The UI and durable state identify this as **user
 confirmed, not automatically verified**. Channel or Brand Account IDs are not
-used as account identity evidence. The browser checks YouTube's signed-in page
-state before releasing a snapshot. That alone never marks captions available.
+used as account identity evidence. Confirming closes the native browser and waits for profile flushing before
+read-only extraction under the same service identity. Cookie presence does not
+prove sign-in or identity; only fresh matching subtitles establish capability.
+Native key-storage or partial-decryption failures are maintenance errors and
+preserve the previous snapshot and generation. No insecure password-store flag
+is added to make extraction succeed.
 
 ## Acquisition and invalidation
 
@@ -50,8 +56,14 @@ assets, change Auto Update, or restore cancelled work. Unified Google + content
 disconnection is a separate caller of this boundary. `shutdown()` preserves the
 profile/snapshot for service restart and invalidates that host's in-flight results.
 
-Browser close first requests graceful profile flushing, then terminates and, if
-needed, kills the entire process group even if the driver has already exited.
+Browser close sends the normal X11 `WM_DELETE_WINDOW` protocol to the browser's
+mapped native windows and waits for clean process exit before reading the profile.
+It does not accept before-unload dialogs. Keyboard/omnibox quit proved unreliable
+in the native fixture, so closing does not depend on focus or typing timing. SIGTERM did not persist
+the synthetic cookie in the native Linux test, so termination is emergency
+cleanup only and can never authorize snapshot extraction. Failed orderly close
+preserves the old snapshot. Cleanup terminates and, if needed, kills the whole
+process group even if the driver has already exited.
 The inherited ownership descriptor prevents a new owner from racing the live
 browser driver during normal host exit. Chromium's native profile lock also
 rejects an overlapping browser. Whole-cgroup resource enforcement and abnormal
@@ -68,11 +80,12 @@ window are approved. Automatic maintenance is not part of this slice.
 
 For an isolated test deployment using a fixed non-root service identity:
 
-1. Install the project's `browser` extra in the service Python environment.
-   Install a matching Playwright Chromium build or set `EDISON_CONTENT_CHROMIUM`
-   to the absolute executable path of a sandbox-capable Chromium installation.
-   On Linux, install `Xvfb` and `xauth`. Do not disable Chromium's sandbox to make
-   startup pass. Verify the service identity can execute all three programs.
+1. Install an ordinary supported stable Chrome and set `EDISON_CONTENT_CHROMIUM`
+   to its absolute executable path (or provide `google-chrome-stable` on PATH).
+   On Linux, install `Xvfb`, `xauth` and `x11vnc`; `EDISON_CONTENT_X11VNC` may select
+   a private x11vnc executable. No Playwright dependency is required by this adapter.
+   Do not disable the browser sandbox or weaken its native password store.
+   Verify executable access and native cookie decryption under the service identity.
 2. Create a fresh stable directory owned by that service identity, mode `0700`,
    outside the reading library and release tree. Set
    `EDISON_CONTENT_SESSION_DIR=/absolute/stable/state/youtube-content-session`.
@@ -91,8 +104,9 @@ For an isolated test deployment using a fixed non-root service identity:
    finish the YouTube site handoff. Do not send credentials to logs or tickets.
 5. Confirm account consistency, paste a YouTube video link known to have source
    subtitles, and select **complete login and check captions**. Availability is
-   reported only after a new matching subtitle response.
-6. Close the server browser and select **fetch captions again**. Then restart the
+   reported only after a new matching subtitle response. The browser closes during
+   this check, including on failure; reopen it explicitly if further login is needed.
+6. With the browser closed, select **fetch captions again**. Then restart the
    service, return through Edison sign-in, and repeat the actual caption check.
    Retain non-secret evidence of these fresh-process checks. This sequence must
    be repeated on the formally provisioned fresh profile during production
@@ -115,22 +129,26 @@ captions, browser close, different worker PIDs, service restart, a Web-submitted
 manual video reaching a manuscript with Auto Update off, failure reason and idle
 close. Focused tests cover single ownership, generation races, secret-copy
 cleanup, typed failure categories, and orphaned process-group cleanup. A real
-Chromium protocol test exercises screenshots, input, close/reopen against a local
-page; its explicit headless mode is confined to that test.
+native Linux protocol test exercises screenshots, synthetic input, graceful
+close, read-only profile extraction and reopen against a local HTTP page. Local
+fixture cookies remain excluded from production Google/YouTube snapshots.
 
-These are controlled functional and local-browser evidence. No genuine Google
-login or authenticated external subtitle smoke was performed for this change.
+These are controlled functional and local-browser evidence. The earlier Playwright handoff encountered a genuine Google unsupported-browser
+rejection; this is consistent with Google’s documented restrictions on automated
+browsers, not a uniquely proven detection cause. The native replacement has not
+yet established genuine Google login or authenticated external subtitle success.
+See [Google supported-browser guidance](https://support.google.com/accounts/answer/7675428).
 The headed Linux deployment, natural Cookie rotation, service-account production
 permissions, whole-host crash/reboot, real busy resource coexistence, reading P95
 and 14-day trial remain unverified. Existing historical prototype success does
 not fill those gaps or establish acceptance of this fresh managed profile.
 
-To run the optional real-browser protocol coverage, install the `browser` extra
-in the test interpreter, then run `python -m playwright install chromium` (or set
-`EDISON_CONTENT_CHROMIUM` to an installed executable) before
-`PYTHONPATH=src:. python -m pytest tests/test_session_browser.py`. If the extra or
-browser executable is absent, only that real-browser test reports **skipped**;
-pipe-timeout and process-group tests still run. A skip is missing evidence, not
-a browser acceptance result. The Web E2E verifies native keyboard clipboard paste
+To run optional real-browser coverage, provision native Chrome, Xvfb, xauth and
+x11vnc in an isolated Linux environment under the same resource cap. Configure
+`EDISON_CONTENT_CHROMIUM` and optionally `EDISON_CONTENT_X11VNC`, then run
+`PYTHONPATH=src:. python -m pytest tests/test_session_browser.py`. Without Linux
+and those executables the native test reports **skipped**; UNIX RFB, pipe-timeout
+and process-group tests still run. A skip is missing evidence, not acceptance.
+The Web E2E verifies native keyboard clipboard paste
 in Chromium; WebKit runs the other content-session scenarios without claiming
 clipboard coverage.

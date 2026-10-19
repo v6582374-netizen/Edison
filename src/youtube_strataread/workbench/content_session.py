@@ -177,7 +177,13 @@ class ContentSession:
         with self._control():
             if not self._running:
                 raise ContentSessionError("user", "服务器浏览器已关闭，请重新打开。")
-            result = self._browser.command(command, arguments or {})
+            try:
+                result = self._browser.command(command, arguments or {})
+            except (ContentSessionError, OSError) as error:
+                if not isinstance(error, ContentSessionError) or error.kind == "maintenance":
+                    self._browser.close()
+                    self._running = False
+                raise
             if command != "screen":
                 self._last_input = self.now()
             return result
@@ -207,7 +213,13 @@ class ContentSession:
                 raise ContentSessionError("user", "请先打开服务器浏览器并完成 YouTube 登录。")
             self._last_input = self.now()
             try:
-                cookies = self._browser.snapshot()
+                try:
+                    cookies = self._browser.snapshot()
+                finally:
+                    # Native snapshot reads only after orderly profile flush. All
+                    # adapters end handoff here, including failed extraction.
+                    self._browser.close()
+                    self._running = False
                 self._atomic(self.root / "current.cookies", cookies)
                 self._state.update(
                     generation=self._state.get("generation", 0) + 1,

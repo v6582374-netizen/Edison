@@ -33,6 +33,7 @@ def test_google_login_is_not_caption_success_and_snapshot_consumers_cannot_write
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: None)
     assert session.status()["state"] == "needs_user"
     browser.handoff = True
+    session.open()
     session.confirm(
         "abcdefghijk",
         same_account=True,
@@ -69,6 +70,7 @@ def test_connection_requires_matching_parseable_nonempty_captions(tmp_path, resu
     session = ContentSession(tmp_path / "session", browser=browser)
     session.open()
     with pytest.raises(ContentSessionError, match="字幕"):
+        session.open()
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
     assert session.status()["state"] == "interrupted"
     session.shutdown()
@@ -86,9 +88,11 @@ def test_profile_single_writer_idle_close_and_old_leases_invalidated(tmp_path):
     result = SubtitleResult("abcdefghijk", "Title", "en", False, SRT)
     session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
     with session.snapshot() as stale:
+        session.open()
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
         with pytest.raises(ContentSessionError, match="旧请求"):
             session.accept(stale, result, "abcdefghijk")
+    session.open()
     clock[0] = 1900
     session.tick()
     assert not browser.running
@@ -150,6 +154,7 @@ def test_old_failure_cannot_overwrite_new_verified_session(tmp_path):
     with ThreadPoolExecutor() as pool:
         stale = pool.submit(session.verify, "abcdefghijk", fetch=slow_failure)
         assert started.wait(5)
+        session.open()
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
         release.set()
         with pytest.raises(ContentSessionError):
@@ -166,6 +171,7 @@ def test_failure_publication_checks_generation_atomically(tmp_path):
     result = SubtitleResult("abcdefghijk", "T", "en", False, SRT)
     session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
     with session.snapshot() as old:
+        session.open()
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
         with pytest.raises(ContentSessionError, match="旧请求"):
             session.record_failure(ContentSessionError("user", "Old challenge"), lease=old)
@@ -200,9 +206,87 @@ def test_new_verification_wins_while_old_failure_waits_at_publication_boundary(t
     with ThreadPoolExecutor() as pool:
         old = pool.submit(session.verify, "abcdefghijk", fetch=failed_fetch)
         assert ready.wait(5)
+        session.open()
         session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
         release.set()
         with pytest.raises(ContentSessionError, match="旧请求"):
             old.result()
     assert session.status()["state"] == "available"
+    session.shutdown()
+
+
+def test_confirm_closes_human_browser_even_when_caption_check_fails(tmp_path):
+    browser = Browser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / "session", browser=browser)
+    session.open()
+
+    def unavailable(url, path):
+        assert not browser.running
+        raise ContentSessionError("network", "network unavailable")
+
+    with pytest.raises(ContentSessionError):
+        session.confirm("abcdefghijk", same_account=True, fetch=unavailable)
+    assert not session.status()["browser_running"]
+    session.shutdown()
+
+
+def test_profile_read_failure_preserves_last_snapshot_and_generation(tmp_path):
+    class NativeReadFailure(Browser):
+        unreadable = False
+
+        def snapshot(self):
+            if self.unreadable:
+                raise ContentSessionError("maintenance", "native key storage unavailable")
+            return super().snapshot()
+
+    browser = NativeReadFailure()
+    browser.handoff = True
+    session = ContentSession(tmp_path / "session", browser=browser)
+    session.open()
+    result = SubtitleResult("abcdefghijk", "T", "en", False, SRT)
+    session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+    generation = session.status()["generation"]
+    session.open()
+    browser.unreadable = True
+    with pytest.raises(ContentSessionError):
+        session.confirm("abcdefghijk", same_account=True, fetch=lambda *args: result)
+    assert session.status()["generation"] == generation
+    assert not session.status()["browser_running"]
+    assert session.status()["state"] == "needs_maintenance"
+    with session.snapshot() as snapshot:
+        assert "fixture-secret" in snapshot.path.read_text()
+    session.shutdown()
+
+
+def test_profile_owner_remains_exclusive_after_browser_closes_during_extraction(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    stopped, release = threading.Event(), threading.Event()
+
+    class StoppedBrowserRead(Browser):
+        def snapshot(self):
+            self.close()
+            stopped.set()
+            assert release.wait(5)
+            return super().snapshot()
+
+    browser = StoppedBrowserRead()
+    browser.handoff = True
+    session = ContentSession(tmp_path / "session", browser=browser)
+    session.open()
+    competing = ContentSession(tmp_path / "session", browser=Browser())
+    result = SubtitleResult("abcdefghijk", "T", "en", False, SRT)
+    with ThreadPoolExecutor() as pool:
+        checking = pool.submit(
+            session.confirm, "abcdefghijk", same_account=True, fetch=lambda *args: result
+        )
+        assert stopped.wait(5)
+        try:
+            with pytest.raises(ContentSessionError, match="另一服务"):
+                competing.open()
+        finally:
+            release.set()
+        assert checking.result()["state"] == "available"
     session.shutdown()
