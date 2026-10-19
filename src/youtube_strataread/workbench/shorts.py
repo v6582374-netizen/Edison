@@ -107,8 +107,17 @@ def classify_page(video_id: str, html: str, *, completed_event: bool = False) ->
 class YouTubeShortsClassifier:
     def __init__(self, requests: YouTubeRequestPolicy | None = None) -> None:
         self.requests = requests
+        self.content_session = None
 
     def classify(self, video_id: str, *, completed_event: bool = False) -> bool | None:
+        if self.content_session is not None:
+            with self.content_session.snapshot() as lease:
+                result = self._classify(video_id, completed_event=completed_event, cookies=lease.path)
+                self.content_session.assert_current(lease)
+                return result
+        return self._classify(video_id, completed_event=completed_event, cookies=youtube_cookie_file())
+
+    def _classify(self, video_id: str, *, completed_event=False, cookies=None):
         if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
             return None
 
@@ -122,7 +131,6 @@ class YouTubeShortsClassifier:
             )
             if self.requests:
                 self.requests.before_request()
-            cookies = youtube_cookie_file()
             opened = urlopen(request, timeout=15) if cookies is None else open_page(request, cookies)
             with opened as response:
                 if response.status != 200:

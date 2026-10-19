@@ -56,11 +56,26 @@ class ManuscriptGenerator(Protocol):
 
 
 class YtDlpCaptions:
-    def __init__(self, requests: YouTubeRequestPolicy | None = None) -> None:
+    def __init__(self, requests: YouTubeRequestPolicy | None = None, *, content_session=None) -> None:
         self.requests = requests
+        self.content_session = content_session
         self.on_metadata: Callable[[str, float | None], None] | None = None
 
     def acquire(self, url: str, *, before_subtitles: Callable[[dict[str, Any]], None] | None = None) -> SubtitleResult:
+        if self.content_session is not None:
+            video_id = parse_qs(urlsplit(url).query).get('v', [''])[0]
+            from youtube_strataread.workbench.content_session import content_failure
+            lease = None
+            try:
+                with self.content_session.snapshot() as lease:
+                    result = self.fetch_snapshot(url, lease.path, before_subtitles=before_subtitles)
+                    self.content_session.accept(lease, result, video_id)
+                    return result
+            except Exception as error:
+                if lease is not None:
+                    self.content_session.assert_current(lease)
+                self.content_session.record_failure(content_failure(error))
+                raise
         cookies = youtube_cookie_file()
         try:
             return download_subtitles(url, cookiefile=cookies, request_policy=self.requests,
@@ -74,6 +89,11 @@ class YtDlpCaptions:
                     and session_cookies.verify(cookies, video_id).get('blocked')):
                 raise YouTubeError(session_cookies.SESSION_BLOCKED_REASON) from error
             raise
+
+    def fetch_snapshot(self, url, path, *, before_subtitles=None):
+        from youtube_strataread.workbench.caption_process import CaptionProcess
+        return CaptionProcess().acquire(url, path, requests=self.requests,
+            on_metadata=self.on_metadata, before_subtitles=before_subtitles)
 
 
 class ConfiguredManuscripts:
@@ -109,7 +129,7 @@ class PreparationService:
     def _defer_request(self, video_id: str, error: Exception) -> bool:
         if not self.workspace.caption_check_allowed(video_id):
             return True
-        if isinstance(error, YouTubeRequestsStopped):
+        if isinstance(error, YouTubeRequestsStopped) or getattr(error, "kind", None) == "invalidated":
             self.workspace.set_preparation_state(video_id, "queued")
             return True
         limited = rate_limit_error(error, now=self.workspace.now())

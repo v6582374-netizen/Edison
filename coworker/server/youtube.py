@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from pydantic import BaseModel, Field
 
 from coworker.secrets import state_dir
@@ -122,6 +122,14 @@ class YouTubeWorkbench:
             workspace=self.workspace, vault=NativeKeychainVault(namespace=str(root.resolve())), oauth=GoogleOAuthGateway()
         )
         self.connection.claim_server_ownership()
+        from youtube_strataread.workbench.content_session import ContentSession
+        self.managed_content = bool(os.environ.get("EDISON_CONTENT_SESSION_DIR"))
+        content_root = Path(os.environ.get(
+            "EDISON_CONTENT_SESSION_DIR", str(root.parent / "youtube-content-session")))
+        if self.managed_content and (not content_root.is_absolute()
+                or content_root.resolve().is_relative_to(root.resolve())):
+            raise ConnectionError("内容会话目录必须是资料库之外的稳定绝对路径。")
+        self.content_session = ContentSession(content_root)
         self.workspace.recover_interrupted_preparations()
         from youtube_strataread.workbench.manual import ManualVideoRequests
         self.manual = ManualVideoRequests(self.workspace, self.connection)
@@ -131,9 +139,11 @@ class YouTubeWorkbench:
         )
         self.preparation = PreparationService(
             workspace=self.workspace,
-            captions=YtDlpCaptions(),
+            captions=YtDlpCaptions(content_session=self.content_session if self.managed_content else None),
             manuscripts=HostManuscripts(manager, self.workspace),
         )
+        if self.managed_content:
+            self.preparation.shorts.content_session = self.content_session
         self.library = LibraryService(workspace=self.workspace, preparation=self.preparation)
         self.batch = AutomaticBatch(preparation=self.preparation)
         self.stop = threading.Event()
@@ -165,6 +175,7 @@ class YouTubeWorkbench:
         # may leave the current stage unchanged while this process is responsive.
         while not self.stop.is_set() and self.thread.is_alive():
             self.heartbeat_at = time.time()
+            self.content_session.tick()
             self.stop.wait(2)
 
     def _run(self) -> None:
@@ -188,6 +199,7 @@ class YouTubeWorkbench:
         return self.batch.run_one()
 
     def close(self) -> None:
+        self.content_session.shutdown()
         self.preparation.stop()
         self.discovery.stop()
         self.stop.set()
@@ -244,6 +256,46 @@ class YouTubeWorkbench:
             return self.workspace.save_summary(video_id, _bounded_summary(draft))
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability.startswith("content_session."):
+            from youtube_strataread.workbench.content_session import ContentSessionError
+            try:
+                operation = capability.split(".", 1)[1]
+                if operation == "status":
+                    result = self.content_session.status()
+                elif not self.managed_content:
+                    raise ContentSessionError("maintenance", "请先配置稳定的服务器内容会话目录并完成资源准入。")
+                elif operation == "open":
+                    result = self.content_session.open()
+                elif operation == "close":
+                    result = self.content_session.close_browser()
+                elif operation in {"confirm", "verify"}:
+                    captions = self.preparation.captions
+                    video_id = arguments.get("video_id")
+                    if arguments.get("url"):
+                        from youtube_strataread.workbench.manual import video_identity
+                        try:
+                            video_id = video_identity(arguments["url"])
+                        except ValueError as error:
+                            raise ContentSessionError("unknown", str(error)) from None
+                    sequence = self.workspace.youtube_requests.snapshot().get("failure_sequence", 0)
+                    fetch = lambda url, path: captions.fetch_snapshot(url, path)
+                    if operation == "confirm":
+                        result = self.content_session.confirm(video_id, same_account=arguments.get("same_account"), fetch=fetch)
+                    else:
+                        result = self.content_session.verify(video_id, fetch=fetch)
+                    self.workspace.youtube_requests.caption_succeeded(observed_sequence=sequence)
+                elif operation in {"screen", "click", "text", "key", "scroll", "youtube"}:
+                    result = self.content_session.browser_command(operation, arguments)
+                else:
+                    raise ContentSessionError("unknown", "不支持的内容会话操作。")
+                return {"ok": True, "result": result}
+            except (ContentSessionError, OSError) as error:
+                from youtube_strataread.workbench.content_session import content_failure
+                error = content_failure(error)
+                self.content_session.record_failure(error)
+                if error.kind == "network":
+                    self.workspace.youtube_requests.network_failed(str(error))
+                return {"ok": False, "error": str(error), "kind": error.kind}
         if capability.startswith("manual."):
             try:
                 if capability == "manual.submit":
@@ -470,7 +522,10 @@ def attach_youtube(app: FastAPI, manager: Any) -> None:
     app.state.youtube_creation_lock = threading.Lock()
 
     @app.post("/v1/youtube/capability")
-    def capability(request: CapabilityRequest) -> dict[str, Any]:
+    def capability(request: CapabilityRequest, response: Response) -> dict[str, Any]:
+        # Browser pixels can contain a Google challenge; never cache handoff responses.
+        if request.capability.startswith("content_session."):
+            response.headers["Cache-Control"] = "no-store"
         try:
             workbench = start_youtube(app, manager)
         except ConnectionError as error:

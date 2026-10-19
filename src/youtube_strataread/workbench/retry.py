@@ -114,6 +114,10 @@ def _transient(statuses: set[int], text: str, error: BaseException) -> bool:
 
 def classify_caption(error: BaseException, now: float) -> Failure:
     """Subtitle 429 is handled by the shared request cooldown before this point."""
+    if getattr(error, 'kind', None) == 'network':
+        return Failure("transient", "字幕获取暂时失败，等待共享能力探测。")
+    if getattr(error, 'kind', None) in {'private', 'deleted', 'access_denied'}:
+        return Failure("fatal", str(error), category=error.kind)
     statuses, deadline, text = _facts(error, now)
     reason = str(error).strip() or type(error).__name__
     if statuses & {401, 403}:
