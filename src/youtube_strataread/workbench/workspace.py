@@ -173,6 +173,72 @@ class LocalWorkspace:
             )
         return inserted
 
+    def pending_manual_timing(self, now: float) -> list[str]:
+        with sqlite3.connect(self.database_path) as connection:
+            return [row[0] for row in connection.execute("""SELECT video_id FROM candidates WHERE request_kind='manual'
+                AND preparation_state IN ('awaiting_timing','awaiting_completion')
+                AND COALESCE(timing_checked_at,0) <= ? ORDER BY COALESCE(timing_checked_at,0),video_id LIMIT 10""", (now - 300,))]
+
+    def refresh_manual_timing(self, candidate: Candidate) -> None:
+        with sqlite3.connect(self.database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute("SELECT * FROM candidates WHERE video_id=? AND request_kind='manual' AND preparation_state IN ('awaiting_timing','awaiting_completion')", (candidate.video_id,)).fetchone()
+            if row is None:
+                return  # Cancellation/deletion after the external request always wins.
+            facts = {key: getattr(candidate, key) for key in ('published_at','published_ts','timing_status',
+                'completion_status','actual_start_at','actual_end_at','scheduled_start_at','timing_checked_at')}
+            if row['timing_status'] == 'event' and candidate.timing_status != 'event':
+                facts.update(timing_status='event', completion_status='unverified')
+            state = self._admission({**dict(row), **facts}, time.time())
+            connection.execute(f"UPDATE candidates SET {','.join(key+'=?' for key in facts)},preparation_state=?,preparation_stage=?,failure_reason=? WHERE video_id=?",
+                (*facts.values(),state,state,WAITING_REASONS.get(state),candidate.video_id))
+
+    def manual_receipt(self, request_id: str) -> str | None:
+        with sqlite3.connect(self.database_path) as connection:
+            row = connection.execute("SELECT video_id FROM manual_video_requests WHERE request_id=?", (request_id,)).fetchone()
+        return row[0] if row else None
+
+    def accept_manual_request(self, video_id: str, request_id: str, *, candidate: Candidate | None = None,
+                              action: str | None = None) -> None:
+        """Commit identity, intent and receipt together; duplicates never reset work."""
+        with sqlite3.connect(self.database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("BEGIN IMMEDIATE")
+            receipt = connection.execute("SELECT video_id FROM manual_video_requests WHERE request_id=?", (request_id,)).fetchone()
+            if receipt:
+                if receipt[0] != video_id:
+                    raise ValueError("提交标识已被其他视频使用，请重新提交。")
+                return
+            row = connection.execute("SELECT * FROM candidates WHERE video_id=?", (video_id,)).fetchone()
+            if row is None:
+                if candidate is None or action:
+                    raise ValueError("视频记录不存在，请重新检查链接。")
+                facts = {key: getattr(candidate, key) for key in ('published_at', 'published_ts', 'timing_status',
+                    'completion_status', 'actual_start_at', 'actual_end_at', 'scheduled_start_at', 'timing_checked_at')}
+                state = self._admission({**facts, 'request_kind': 'manual'}, time.time())
+                connection.execute(f"""INSERT INTO candidates(video_id,channel_id,channel_title,title,url,discovered_at,
+                    request_kind,preparation_state,failure_reason,{','.join(facts)}) VALUES(?,?,?,?,?,?,'manual',?,?,{','.join('?' for _ in facts)})""",
+                    (video_id,candidate.channel_id,candidate.channel_title,candidate.title,candidate.url,time.time(),
+                     state,WAITING_REASONS.get(state),*facts.values()))
+            elif action:
+                expected = {'restore': ('cancelled',), 'retry': ('failed', 'unavailable')}.get(action)
+                if not expected or row['preparation_state'] not in expected or row['manuscript_version']:
+                    raise ValueError("视频状态已变化，请查看现有任务或文档。")
+                connection.execute("""UPDATE candidates SET request_kind='manual',preparation_state='queued',
+                    preparation_stage='queued',failure_reason=NULL,retry_at=NULL,rate_limit_attempts=0,
+                    caption_first_absent_at=NULL,caption_checks=0,caption_checks_ended_at=NULL,
+                    preparation_completed_at=NULL WHERE video_id=?""", (video_id,))
+                self._recheck_waiting(connection)
+                self._activity_event(connection, video_id, 'restored' if action == 'restore' else 'queued')
+            elif not row['manuscript_version'] and row['preparation_state'] not in ('cancelled','failed','unavailable','filtered'):
+                connection.execute("UPDATE candidates SET request_kind='manual' WHERE video_id=?", (video_id,))
+                if row['preparation_state'] == 'expired':
+                    state = self._admission({**dict(row), 'request_kind':'manual'}, time.time())
+                    connection.execute("UPDATE candidates SET preparation_state=?,preparation_stage=?,failure_reason=? WHERE video_id=?",
+                                       (state,state,WAITING_REASONS.get(state),video_id))
+            connection.execute("INSERT INTO manual_video_requests VALUES (?,?,?)", (request_id, video_id, time.time()))
+
     def excluded_channels(self) -> list[str]:
         with sqlite3.connect(self.database_path) as connection:
             return [
@@ -228,8 +294,8 @@ class LocalWorkspace:
                   AND (? = 0 OR (EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = c.video_id)
                                  AND (shorts_status = 'video' OR manuscript_version IS NOT NULL)))
                   AND (? = 0 OR NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = c.video_id))
-                  AND channel_id NOT IN (SELECT channel_id FROM excluded_channels)
-                  AND channel_id NOT IN (SELECT channel_id FROM unsubscribed_channels)
+                  AND (request_kind = 'manual' OR (channel_id NOT IN (SELECT channel_id FROM excluded_channels)
+                  AND channel_id NOT IN (SELECT channel_id FROM unsubscribed_channels)))
                   AND (shorts_status != 'short' OR manuscript_version IS NOT NULL)
                 ORDER BY discovered_at ASC LIMIT 1
                 """,
@@ -551,8 +617,8 @@ class LocalWorkspace:
             for video_id in dict.fromkeys(video_ids):
                 cursor = connection.execute(
                     f"""UPDATE candidates SET preparation_state = ?, preparation_stage = NULL,
-                        stage_updated_at = ?, commenced_at = NULL, request_kind = 'automatic', preparation_started_at = NULL,
-                        preparation_completed_at = NULL, failure_reason = NULL
+                        stage_updated_at = ?, commenced_at = NULL, preparation_started_at = NULL,
+                        preparation_completed_at = NULL, failure_reason = NULL, request_kind = 'automatic'
                         WHERE video_id = ? AND preparation_state IN ({",".join("?" for _ in expected)})""",
                     (target, time.time(), video_id, *expected),
                 )
@@ -588,7 +654,7 @@ class LocalWorkspace:
             raise ValueError("无效的分页范围。")
         where = "preparation_state = ?"
         if state in {"queued", "awaiting_classification", "rate_limited", "waiting_retry"}:
-            where += " AND channel_id NOT IN (SELECT channel_id FROM excluded_channels)"
+            where += " AND (request_kind = 'manual' OR channel_id NOT IN (SELECT channel_id FROM excluded_channels))"
         with sqlite3.connect(self.database_path) as connection:
             connection.row_factory = sqlite3.Row
             total = connection.execute(
@@ -783,7 +849,7 @@ class LocalWorkspace:
             row = connection.execute(
                 """
                 SELECT c.video_id, c.channel_id, c.channel_title, c.title, c.url, c.published_at, c.playlist_added_at, c.source_observed_at, c.source_observed_from, c.source_observed_until, c.discovered_at, c.published_ts, c.timing_status, c.completion_status, c.actual_start_at, c.actual_end_at, c.scheduled_start_at, c.timing_checked_at,
-                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version,
+                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version, c.request_kind,
                        c.manuscript_path, c.preparation_completed_at, c.duration_seconds,
                        t.path AS transcript_path
                 FROM candidates c LEFT JOIN transcripts t ON t.video_id = c.video_id
@@ -954,7 +1020,7 @@ class LocalWorkspace:
         with sqlite3.connect(self.database_path) as connection:
             rows = connection.execute(
                 """SELECT preparation_state, COUNT(*) FROM candidates
-                WHERE preparation_state NOT IN ('queued', 'awaiting_classification', 'rate_limited', 'waiting_retry') OR channel_id NOT IN
+                WHERE preparation_state NOT IN ('queued', 'awaiting_classification', 'rate_limited', 'waiting_retry') OR request_kind='manual' OR channel_id NOT IN
                     (SELECT channel_id FROM excluded_channels)
                 GROUP BY preparation_state"""
             ).fetchall()
@@ -1080,7 +1146,7 @@ class LocalWorkspace:
             connection.executemany("DELETE FROM unsubscribed_channels WHERE channel_id = ?", [(key,) for key in incoming])
             connection.executemany(
                 "UPDATE candidates SET preparation_state = 'cancelled', failure_reason = ? "
-                "WHERE channel_id = ? AND manuscript_version IS NULL "
+                "WHERE channel_id = ? AND manuscript_version IS NULL AND request_kind != 'manual' "
                 "AND preparation_state IN ('queued', 'rate_limited', 'waiting_retry', 'awaiting_classification', 'expired', 'awaiting_timing', 'awaiting_completion')",
                 [("频道已取关，停止自动准备。已有文档保留。", key) for key in removed],
             )
@@ -1224,6 +1290,7 @@ class LocalWorkspace:
                     manuscript_version INTEGER,
                     manuscript_path TEXT
                 );
+                CREATE TABLE IF NOT EXISTS manual_video_requests (request_id TEXT PRIMARY KEY, video_id TEXT NOT NULL, accepted_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS transcripts (
                     video_id TEXT PRIMARY KEY REFERENCES candidates(video_id) ON DELETE CASCADE,
                     language TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL

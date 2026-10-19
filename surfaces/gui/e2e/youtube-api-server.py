@@ -18,17 +18,23 @@ root = Path(sys.argv[1])
 os.environ.update(COWORKER_STATE_DIR=str(root / 'host'),
     COWORKER_API_TOKEN='youtube-api-e2e', YOUTUBE_WORKBENCH_WORKSPACE=str(root / 'youtube'),
     EDISON_GOOGLE_OAUTH_CLIENT_ID='fixture-client', EDISON_GOOGLE_OAUTH_CLIENT_SECRET='fixture-client-secret')
+if os.environ.get('EDISON_E2E_WEB') == '1':
+    import bcrypt
+    password_file = root / 'password.hash'
+    password_file.write_bytes(bcrypt.hashpw(b'isolated-fixture-password', bcrypt.gensalt(rounds=4)))
+    os.environ.update(EDISON_WEB_LOGIN='1', EDISON_WEB_USERNAME='owner',
+                      EDISON_WEB_PASSWORD_HASH_FILE=str(password_file))
 sys.path.insert(0, str(Path.cwd() / 'tests'))
 
 import uvicorn
 from keyring.backends.macOS import Keyring
-from translation_fixture import source_from_prompt
 from shorts_fixture import player_page
+from translation_fixture import source_from_prompt
 
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from coworker.server import SessionManager, create_app
 from youtube_strataread.downloader.youtube import SubtitleResult
-from youtube_strataread.workbench import connection, discovery, shorts, workspace
+from youtube_strataread.workbench import connection, discovery, manual, shorts, workspace
 from youtube_strataread.workbench.library import YtDlpCaptions
 
 
@@ -62,7 +68,7 @@ def keyring_write(self, service, account, password):
 
 
 Keyring.get_password, Keyring.set_password = keyring_read, keyring_write
-workspace.time = discovery.time = SimpleNamespace(time=now)
+workspace.time = discovery.time = manual.time = SimpleNamespace(time=now)
 
 
 def response(payload):
@@ -171,6 +177,9 @@ def captions(self, url, *, before_subtitles=None):
         video = next(v for v in config().get('videos', []) if v['id'] == video_id)
         before_subtitles({'id':video_id,'live_status':video.get('caption_status','not_live')})
     (root / ('caption-' + video_id)).touch()
+    if config().get('caption_failure') is True:
+        from youtube_strataread.downloader.youtube import YouTubeError
+        raise YouTubeError('This video is unavailable')
     with (root / 'caption-requests.jsonl').open('a') as log:
         log.write(json.dumps({'video_id':video_id, 'at':now()}) + '\n')
     if config().get('caption_failure') == 'absent-all' or (config().get('caption_failure') == 'absent' and video_id == 'absent-one'):
@@ -210,7 +219,7 @@ class Provider(ProviderClient):
 
 
 manager = SessionManager(data_dir=root / 'host', provider=Provider(), model='fixture-model')
-manager.get_settings = lambda: {'model_ready': True}
+manager.get_settings = lambda: {'model_ready': config().get('model_ready', True)}
 app = create_app(manager)
 sock = socket.socket()
 sock.bind(('127.0.0.1', 0))

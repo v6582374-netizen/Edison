@@ -1,0 +1,15 @@
+/* Narrow, centered single action adapted from Vegapunk TranslationView at e999006b. */
+.yp-add-video { width: min(100%, 560px); margin: clamp(32px, 9vh, 104px) auto; padding: 24px; text-align: center; }
+.yp-add-video h1 { font-size: 28px; letter-spacing: -.025em; margin: 0 0 12px; }
+.yp-add-video > p { line-height: 1.7; }
+.yp-add-video form { display: flex; flex-direction: column; gap: 12px; margin: 28px 0 16px; }
+.yp-add-video label { text-align: left; font-size: 13px; }
+.yp-add-video input { width: 100%; min-width: 0; padding: 14px; border: 1px solid var(--color-line, #8886); border-radius: 10px; background: transparent; color: inherit; }
+.yp-add-video input:focus-visible { outline: 2px solid var(--color-accent, #3679d5); outline-offset: 3px; }
+.yp-add-video .yp-btn { min-height: 44px; }
+.yp-add-existing { text-align: left; border: 1px solid #8884; border-radius: 12px; padding: 20px; }
+.yp-manual-focus { border: 1px solid #8885; border-radius: 12px; padding: 18px; margin-bottom: 18px; overflow-wrap: anywhere; }
+.yp-manual-focus:focus-visible { outline: 2px solid var(--color-accent, #3679d5); }
+@media (max-width: 600px) { .yp-add-video { padding: 16px; margin: 24px auto; } .yp-page-nav { flex-wrap: wrap; } }
+
+.yp-requested-document { max-width: 780px; padding: 24px; margin: 0 auto; line-height: 1.8; overflow-wrap: anywhere; }

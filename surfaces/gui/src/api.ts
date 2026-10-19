@@ -2554,6 +2554,8 @@ export async function nameCurrentProject(
 }
 
 /** YouTube capabilities share the host's authenticated transport and provider settings. */
+export class YouTubeCapabilityError extends Error {}
+
 export async function youtubeCapability<T>(capability: string, arguments_: Record<string, unknown> = {}): Promise<T> {
   const response = await fetch(`${httpBase()}/v1/youtube/capability`, {
     method: "POST",
@@ -2562,7 +2564,7 @@ export async function youtubeCapability<T>(capability: string, arguments_: Recor
   });
   if (!response.ok) throw new Error(`YouTube 服务暂时不可用 (${response.status})`);
   const data = await response.json();
-  if (!data.ok) throw new Error(data.error || "操作未完成，请重试。");
+  if (!data.ok) throw new YouTubeCapabilityError(data.error || "操作未完成，请重试。");
   return data.result as T;
 }
 

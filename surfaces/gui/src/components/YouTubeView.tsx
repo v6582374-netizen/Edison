@@ -7,6 +7,8 @@ import { NoticeStack } from "./NoticeStack";
 import { ActivityPage } from "./youtube/ActivityPage";
 import { ProgressPage } from "./youtube/ProgressPage";
 import { useModalInteraction, type ModalInput } from "./ModalSurface";
+import { AddVideo, type VideoRequest } from "./youtube/AddVideo";
+import { RequestedVideo, RequestedDocument } from "./youtube/RequestedVideo";
 import { OfficialAuthorization } from "./youtube/OfficialAuthorization";
 import { Dialog } from "./youtube/Dialog";
 import { DocumentViews, ChannelAvatar } from "./youtube/DocumentViews";
@@ -115,7 +117,7 @@ export function YouTubeView({
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [page, setPage] = useState<"documents" | "progress" | "activity">("progress");
+  const [page, setPage] = useState<"documents" | "progress" | "activity" | "add">("progress");
   const [activityReceivedAt, setActivityReceivedAt] = useState(0);
   const [activityError, setActivityError] = useState(false);
   const revision = useRef(0),
@@ -369,6 +371,14 @@ export function YouTubeView({
     setBefore("");
     setMessage("");
   };
+  const [requestedVideo, setRequestedVideo] = useState<string | null>(null);
+  const [requestedDocument, setRequestedDocument] = useState<Asset | null>(null);
+  const openRequestedDocument = (asset: Asset) => { clearFilters(); setRequestedDocument(asset); setPage("documents"); };
+  const acceptedVideo = (result: VideoRequest) => {
+    if (!result.asset) return;
+    if (result.disposition === "document") openRequestedDocument(result.asset);
+    else { setRequestedVideo(result.asset.video_id); setPage("progress"); void refreshActivity(); }
+  };
   const selectedId = selected?.video_id;
   return (
     <main ref={mainRef} tabIndex={-1} {...modal.capture} className={`yp-main${page === "documents" ? " yp-documents" : ""}`} aria-label={yt("YouTube 资料库")}>
@@ -379,6 +389,7 @@ export function YouTubeView({
             <button aria-current={page === "progress" ? "page" : undefined} onClick={() => setPage("progress")}>{yt("处理进度")}</button>
             <button aria-current={page === "documents" ? "page" : undefined} onClick={() => setPage("documents")}>{yt("阅读文档")}</button>
             <button aria-current={page === "activity" ? "page" : undefined} onClick={() => setPage("activity")}>{yt("事件时间线")}</button>
+            <button aria-current={page === "add" ? "page" : undefined} onClick={() => setPage("add")}>{yt("添加视频")}</button>
           </nav>
           <div className="yp-tools">
             {page === "progress" && <div className="yp-progress-actions" ref={setProgressActions} />}
@@ -507,12 +518,13 @@ export function YouTubeView({
         </>}
       </header>
       <div className="yp-content">
-        {page === "progress" ? (
+        {page === "add" ? <AddVideo onAccepted={acceptedVideo} /> : page === "progress" ? (<>
+          {requestedVideo && <RequestedVideo videoId={requestedVideo} onDocument={openRequestedDocument} />}
           <ProgressPage actionsTarget={progressActions} activity={activity} receivedAt={activityReceivedAt} disconnected={activityError}
             onRefresh={refreshActivity} onModelSettings={onModelSettings} onNotice={setProgressMessage} />
-        ) : page === "activity" ? (
+        </>) : page === "activity" ? (
           <ActivityPage activity={activity} disconnected={activityError} />
-        ) : loading ? (
+        ) : requestedDocument ? <RequestedDocument key={requestedDocument.video_id} asset={requestedDocument} onClose={() => setRequestedDocument(null)} /> : loading ? (
           <p className="yp-inline-status">{yt("正在加载文档…")}</p>
         ) : !assets.length && layout !== "channels" ? (
           <div className="yp-empty">
