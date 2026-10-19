@@ -188,10 +188,10 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
                 checked={selected.includes(item.video_id)} onChange={e => setSelected(ids => e.target.checked ? [...ids, item.video_id] : ids.filter(id => id !== item.video_id))} />}
               <div className="yp-queue-copy"><strong>{item.title}</strong><span>{videoMetadataText(item)}</span>
                 {item.retry_at && <p>{yt("下一次检查")}：{new Date(item.retry_at * 1000).toLocaleString()}</p>}
-                {filter === "waiting_retry" && <p>{item.failure_reason}</p>}
+                {(filter === "waiting_retry" || !!item.caption_checks_ended_at) && <p>{item.failure_reason}</p>}
                 <p>{item.request_kind === "manual" ? yt("手动请求") : item.commenced_at ? yt("已实际开工，可跨窗口续办；仍需自动更新许可。") : yt("尚未实际开工，首次开工仍须在 72 小时内。")}</p>
                 {(filter === "awaiting_completion" || filter === "expired" || filter === "awaiting_timing") && <p>{yt(item.failure_reason || "")}</p>}
-                {filter !== "awaiting_completion" && filter !== "expired" && filter !== "awaiting_timing" && !!item.failure_reason && <><p>{reason.title} · {reason.description}</p><details><summary>{yt("技术详情")}</summary><pre>{item.failure_reason}</pre></details></>}
+                {filter !== "awaiting_completion" && filter !== "expired" && filter !== "awaiting_timing" && !!item.failure_reason && !item.caption_checks_ended_at && <><p>{reason.title} · {reason.description}</p><details><summary>{yt("技术详情")}</summary><pre>{item.failure_reason}</pre></details></>}
               </div>
               <div className="yp-queue-actions">
                 {canSelect && <button className="yp-btn" disabled={busy || !!listError} onClick={() => void run(capability, {video_ids: [item.video_id]})}>{verb}</button>}

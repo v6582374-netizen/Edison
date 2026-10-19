@@ -398,11 +398,13 @@ test('confirmed caption absence yields and ends at 24 hours until explicit retry
     await expect.poll(async()=>(await items())[0]?.retry_at).toBe(first+86400);
     await app.clock(first+86400);
     await expect.poll(async()=>(await app.call('activity.snapshot')).failed).toBe(1);
+    await page.getByRole('button',{name:/处理失败/}).click();
+    await expect(page.getByRole('region',{name:'处理队列',exact:true}).getByText('字幕自动检查已结束，需要时请显式重试。已有素材保留。',{exact:true})).toBeVisible();
     await app.scenario({...scenario,caption_failure:undefined});
     await app.clock(first+172800);
     await page.waitForTimeout(1200);
     expect((await app.call('activity.snapshot')).ready).toBe(1);
-    await app.call('activity.retry',{video_id:'absent-one'});
+    await page.getByRole('region',{name:'处理队列',exact:true}).getByRole('button',{name:'继续重试',exact:true}).click();
     await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(2);
   }finally{await app.close();}
 });

@@ -138,6 +138,7 @@ export type CurrentPreparation = {
   preparation_stage: string | null; preparation_started_at: number | null; stage_updated_at: number | null;
 };
 export type QueueItem = {
+  caption_checks_ended_at?: number | null;
   acquisition_failure_kind?: string | null;
   retry_at?: number | null;
   video_id: string; title: string; channel_title: string; preparation_state: string;
