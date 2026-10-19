@@ -94,3 +94,19 @@ def test_smaller_or_unbounded_kernel_budget_cannot_reuse_fixed_release_headroom(
     for name, value in {'memory.max':limit,'memory.high':high,'memory.swap.max':'0','memory.current':'0','memory.swap.current':'0'}.items():
         (group/name).write_text(value)
     assert not LinuxResources(group,proc=proc,cgroup_root=root).observe().constrained
+
+
+def test_native_command_preserves_resource_exit_before_next_status_poll():
+    import subprocess
+    import sys
+    from youtube_strataread.workbench.session_browser import ServerBrowser
+    browser = ServerBrowser()
+    browser.process = subprocess.Popen([sys.executable, '-c', 'raise SystemExit(75)'],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
+    browser.process.wait(timeout=5)
+    try:
+        with pytest.raises(ContentSessionError) as error:
+            browser.command('screen', {})
+        assert error.value.kind == 'resource'
+    finally:
+        browser.close()

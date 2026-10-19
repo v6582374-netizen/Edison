@@ -107,6 +107,8 @@ class ServerBrowser:
 
     def command(self, command, arguments):
         if not self.process or self.process.poll() is not None:
+            if self.resource_released:
+                raise ContentSessionError("resource", "服务器资源不足，已释放登录画面；等待资源恢复。")
             raise ContentSessionError("maintenance", "服务器浏览器已退出，请重新打开。")
         try:
             self.process.stdin.write(
