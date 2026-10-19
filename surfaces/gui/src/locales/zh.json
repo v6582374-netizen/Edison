@@ -494,6 +494,8 @@
     "show_less": "收起",
     "show_n_more": "再显示 {{n}} 条",
     "sign_out": "退出登录",
+    "edison_sign_out": "退出 Edison",
+    "edison_sign_out_detail": "退出后，已许可的 YouTube 后台工作继续。停止自动更新请关闭 Auto Update。",
     "account_aria": "账户：{{email}}",
     "account_not_signed_in_aria": "账户：未登录",
     "not_signed_in_row": "未登录",

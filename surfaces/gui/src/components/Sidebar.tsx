@@ -1225,6 +1225,15 @@ export function Sidebar(props: Props) {
                   false,
                   <span className="text-[11px] text-faint">⌘ ,</span>,
                 )}
+                {globalThis.location?.protocol === "https:" && (
+                  <form method="post" action="/v1/web-auth/logout">
+                    <button type="submit"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left text-muted hover:bg-paper"
+                      title={t("sidebar.edison_sign_out_detail")}>
+                      <Icon name="signOut" size={15} />{t("sidebar.edison_sign_out")}
+                    </button>
+                  </form>
+                )}
                 {/* No Automations here — the sidebar's top nav already carries it. */}
                 {appMenuItem("audit", t("nav.activity"), props.onOpenAudit, props.auditActive)}
                 {cloud?.signed_in && (
