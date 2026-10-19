@@ -13,6 +13,10 @@ import zlib
 from pathlib import Path
 
 
+class DesktopError(OSError):
+    """A broken desktop stream cannot be reused for another human command."""
+
+
 class Desktop:
     def __init__(self, path: Path):
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -20,22 +24,22 @@ class Desktop:
         try:
             self.socket.connect(str(path))
             if self._read(12) != b"RFB 003.008\n":
-                raise ValueError("unsupported desktop protocol")
+                raise DesktopError("unsupported desktop protocol")
             self.socket.sendall(b"RFB 003.008\n")
             count = self._read(1)[0]
             if not count or 1 not in self._read(count):
-                raise ValueError("private desktop unavailable")
+                raise DesktopError("private desktop unavailable")
             self.socket.sendall(b"\x01")
             if self._read(4) != bytes(4):
-                raise ValueError("private desktop unavailable")
+                raise DesktopError("private desktop unavailable")
             self.socket.sendall(b"\x01")
             self.width, self.height = struct.unpack("!HH", self._read(4))
             if not (0 < self.width <= 1920 and 0 < self.height <= 1200):
-                raise ValueError("unsupported desktop size")
+                raise DesktopError("unsupported desktop size")
             self._read(16)
             length = struct.unpack("!I", self._read(4))[0]
             if length > 4096:
-                raise ValueError("invalid desktop name")
+                raise DesktopError("invalid desktop name")
             self._read(length)
             # 32-bit little-endian BGRX pixels, truecolor, no server palette.
             self.socket.sendall(
@@ -73,19 +77,19 @@ class Desktop:
                 self._read(3)
                 length = struct.unpack("!I", self._read(4))[0]
                 if length > 65536:
-                    raise ValueError("desktop clipboard too large")
+                    raise DesktopError("desktop clipboard too large")
                 self._read(length)
                 continue
             if kind != 0:
-                raise ValueError("unsupported desktop response")
+                raise DesktopError("unsupported desktop response")
             self._read(1)
             count = struct.unpack("!H", self._read(2))[0]
             if count > 4096:
-                raise ValueError("invalid desktop update")
+                raise DesktopError("invalid desktop update")
             for _ in range(count):
                 x, y, width, height, encoding = struct.unpack("!HHHHi", self._read(12))
                 if encoding != 0 or x + width > self.width or y + height > self.height:
-                    raise ValueError("invalid desktop rectangle")
+                    raise DesktopError("invalid desktop rectangle")
                 for row in range(height):
                     offset = ((y + row) * self.width + x) * 4
                     self.pixels[offset : offset + width * 4] = self._read(width * 4)
@@ -113,7 +117,7 @@ class Desktop:
                 "width": self.width,
                 "height": self.height,
             }
-        raise ValueError("desktop update unavailable")
+        raise DesktopError("desktop update unavailable")
 
     def _pointer(self, mask, x, y):
         self.socket.sendall(struct.pack("!BBHH", 5, mask, x, y))
@@ -180,3 +184,120 @@ class Desktop:
         self._key(0xFFE3, False)
         self.text(url)
         self.key("Enter")
+
+
+def wait_for_native_window(display_name, *, alive, timeout=10):
+    """Wait for a mapped native window, not a webpage or authentication state.
+
+    Xvfb/RFB can be ready before Chrome has any window to receive keyboard input.
+    Only window geometry/map state is read; no page title, address or pixels.
+    """
+    import ctypes
+    import time
+
+    class Attributes(ctypes.Structure):
+        _fields_ = [
+            ("x", ctypes.c_int),
+            ("y", ctypes.c_int),
+            ("width", ctypes.c_int),
+            ("height", ctypes.c_int),
+            ("border_width", ctypes.c_int),
+            ("depth", ctypes.c_int),
+            ("visual", ctypes.c_void_p),
+            ("root", ctypes.c_ulong),
+            ("window_class", ctypes.c_int),
+            ("bit_gravity", ctypes.c_int),
+            ("win_gravity", ctypes.c_int),
+            ("backing_store", ctypes.c_int),
+            ("backing_planes", ctypes.c_ulong),
+            ("backing_pixel", ctypes.c_ulong),
+            ("save_under", ctypes.c_int),
+            ("colormap", ctypes.c_ulong),
+            ("map_installed", ctypes.c_int),
+            ("map_state", ctypes.c_int),
+            ("all_event_masks", ctypes.c_long),
+            ("your_event_mask", ctypes.c_long),
+            ("do_not_propagate_mask", ctypes.c_long),
+            ("override_redirect", ctypes.c_int),
+            ("screen", ctypes.c_void_p),
+        ]
+
+    x11 = ctypes.CDLL("libX11.so.6")
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XQueryTree.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
+    x11.XGetWindowAttributes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(Attributes),
+    ]
+    x11.XFree.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    x11.XGetInputFocus.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    # A window may disappear between the tree query and attributes query.
+    handler_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+    handler = handler_type(lambda *_: 0)
+    x11.XSetErrorHandler.argtypes = [ctypes.c_void_p]
+    x11.XSetErrorHandler.restype = ctypes.c_void_p
+    previous_handler = x11.XSetErrorHandler(ctypes.cast(handler, ctypes.c_void_p))
+    display = x11.XOpenDisplay(display_name.encode())
+    if not display:
+        x11.XSetErrorHandler(previous_handler)
+        raise DesktopError("native display unavailable")
+    try:
+        root = x11.XDefaultRootWindow(display)
+        deadline = time.monotonic() + timeout
+        while alive() and time.monotonic() < deadline:
+            root_out, parent = ctypes.c_ulong(), ctypes.c_ulong()
+            children = ctypes.POINTER(ctypes.c_ulong)()
+            count = ctypes.c_uint()
+            if x11.XQueryTree(
+                display,
+                root,
+                ctypes.byref(root_out),
+                ctypes.byref(parent),
+                ctypes.byref(children),
+                ctypes.byref(count),
+            ):
+                try:
+                    for index in range(count.value):
+                        attributes = Attributes()
+                        if (
+                            x11.XGetWindowAttributes(
+                                display, children[index], ctypes.byref(attributes)
+                            )
+                            and attributes.map_state == 2
+                            and attributes.width >= 200
+                            and attributes.height >= 200
+                        ):
+                            # This private display has only the owned browser.
+                            # Focus its mapped window before accepting human keys.
+                            x11.XSetInputFocus(display, children[index], 2, 0)
+                            x11.XSync(display, 0)
+                            focus, revert = ctypes.c_ulong(), ctypes.c_int()
+                            x11.XGetInputFocus(display, ctypes.byref(focus), ctypes.byref(revert))
+                            if focus.value == children[index]:
+                                return
+                finally:
+                    if children:
+                        x11.XFree(children)
+            time.sleep(0.05)
+        raise DesktopError("native browser window did not become ready")
+    finally:
+        x11.XCloseDisplay(display)
+        x11.XSetErrorHandler(previous_handler)

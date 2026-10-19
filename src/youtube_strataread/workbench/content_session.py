@@ -177,7 +177,13 @@ class ContentSession:
         with self._control():
             if not self._running:
                 raise ContentSessionError("user", "服务器浏览器已关闭，请重新打开。")
-            result = self._browser.command(command, arguments or {})
+            try:
+                result = self._browser.command(command, arguments or {})
+            except (ContentSessionError, OSError) as error:
+                if not isinstance(error, ContentSessionError) or error.kind == "maintenance":
+                    self._browser.close()
+                    self._running = False
+                raise
             if command != "screen":
                 self._last_input = self.now()
             return result

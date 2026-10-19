@@ -91,6 +91,8 @@ class ServerBrowser:
                 kind,
                 "请在服务器 YouTube 页面完成登录及站点交接。"
                 if kind == "user"
+                else "浏览器操作参数无效，请刷新画面后重试。"
+                if kind == "unknown"
                 else "服务器浏览器操作失败，请检查浏览器安装、沙箱与存储权限。",
             )
         return result.get("result", {})
@@ -104,6 +106,10 @@ class ServerBrowser:
             )
             self.process.stdin.flush()
             return self._read(timeout=self.command_timeout)
+        except ContentSessionError as error:
+            if error.kind == "maintenance":
+                self.close()
+            raise
         except (BrokenPipeError, OSError):
             self.close()
             raise ContentSessionError("maintenance", "服务器浏览器连接已结束。") from None
@@ -199,7 +205,7 @@ def profile_snapshot(profile):
 def _serve(profile, start_url, runtime):
     import shutil
 
-    from youtube_strataread.workbench.session_desktop import Desktop
+    from youtube_strataread.workbench.session_desktop import Desktop, wait_for_native_window
 
     def reply(result=None, kind=None):
         print(json.dumps({"ok": kind is None, "result": result, "kind": kind}), flush=True)
@@ -274,6 +280,7 @@ def _serve(profile, start_url, runtime):
                 raise RuntimeError("native desktop failed")
             time.sleep(0.05)
         desktop = Desktop(socket_path)
+        wait_for_native_window(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
         reply()
         for line in sys.stdin:
             try:
@@ -308,10 +315,15 @@ def _serve(profile, start_url, runtime):
                 reply(kind=error.kind)
                 if command == "snapshot":
                     break
-            except Exception:
-                reply(kind="maintenance")
+            except (ValueError, KeyError, TypeError, OverflowError):
+                reply(kind="unknown")
                 if command == "snapshot":
                     break
+            except Exception:
+                # A truncated/invalid/timed-out RFB stream is permanently
+                # poisoned. Retire the entire driver before another request.
+                reply(kind="maintenance")
+                break
     finally:
         try:
             stop_browser()
