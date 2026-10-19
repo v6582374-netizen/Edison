@@ -138,3 +138,134 @@ def test_nonresource_start_failure_does_not_replay_human_open_on_heartbeat(tmp_p
         assert session.status()['state'] == expected_state
     finally:
         session.shutdown()
+
+
+def test_observed_youtube_reclaim_plateau_releases_before_kernel_high():
+    # Public-page replay: peak 636911616 B (< old 608 MiB release),
+    # memory.events high 78757 and PSI full total ~44 s despite zero OOM.
+    observed = [ResourceObservation(available=2*1024**3, browser_memory=636911616, browser_swap=0, constrained=True)]
+    governor = ResourceGovernor(observe=lambda: observed[0])
+    assert governor.status()['release_browser']
+    # Leave 32 MiB below the operator-owned 576 MiB high watermark.
+    observed[0] = ResourceObservation(2*1024**3, 544*1024**2, 0, True)
+    assert governor.status()['release_browser']
+    observed[0] = ResourceObservation(2*1024**3, 500*1024**2, 0, True)
+    assert not governor.status()['release_browser']
+    governor.require_browser_start()
+
+
+@pytest.mark.parametrize("stubborn_descendant", [False, True])
+def test_stalled_partial_screen_releases_on_pressure_and_keeps_observation(tmp_path, monkeypatch, stubborn_descendant):
+    import subprocess
+    import sys
+    import time
+    from youtube_strataread.workbench.resource_governor import LinuxResources
+    from youtube_strataread.workbench.session_browser import ServerBrowser
+    marker = tmp_path / 'awaiting-screen'
+    ticks = tmp_path / 'child-ticks'
+    child = "import signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); p=pathlib.Path(" + repr(str(ticks)) + ");\nwhile True:\n p.write_text(str(time.monotonic())); time.sleep(.02)"
+    worker = tmp_path / 'partial-screen.py'
+    worker.write_text("""import pathlib,subprocess,sys,time
+sys.stdin.readline()
+if sys.argv[2]:
+    subprocess.Popen([sys.executable,'-c',sys.argv[2]])
+    while not pathlib.Path(sys.argv[3]).exists(): time.sleep(.01)
+pathlib.Path(sys.argv[1]).touch()
+sys.stdout.write('{"ok":');sys.stdout.flush()
+time.sleep(2)
+print('true,"result":{}}',flush=True)
+""")
+    monkeypatch.setattr(LinuxResources, 'observe', lambda self, **_: ResourceObservation(
+        2*1024**3, 636911616 if marker.exists() else 0, 0, True))
+    browser = ServerBrowser(command_timeout=.5)
+    browser.process = subprocess.Popen([sys.executable, str(worker), str(marker), child if stubborn_descendant else '', str(ticks)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
+    process = browser.process
+    started = time.monotonic()
+    try:
+        with pytest.raises(ContentSessionError) as error:
+            browser.command('screen', {})
+        assert error.value.kind == 'resource', str(error.value)
+        assert browser.last_resource_release['browser_memory_bytes'] == 636911616
+        assert not browser.alive
+        assert process.poll() is not None
+        assert time.monotonic() - started < (4.5 if stubborn_descendant else 1.5)
+        if stubborn_descendant:
+            stopped = ticks.read_text()
+            time.sleep(.1)
+            assert ticks.read_text() == stopped
+    finally:
+        browser.close()
+
+
+def test_heartbeat_pressure_releases_idle_native_without_screenshot(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    import time
+    from youtube_strataread.workbench import session_browser
+    from youtube_strataread.workbench.content_session import ContentSession
+    from youtube_strataread.workbench.resource_governor import LinuxResources
+    observed = [ResourceObservation(2*1024**3, 0, 0, True)]
+    monkeypatch.setattr(LinuxResources, 'observe', lambda self, **_: observed[0])
+    monkeypatch.setenv('EDISON_CONTENT_BROWSER_ENABLED', '1')
+    worker = tmp_path / 'idle-browser.py'
+    worker.write_text("""import json,time
+print(json.dumps({'ok':True,'result':{}}),flush=True)
+time.sleep(2)
+""")
+    original = subprocess.Popen
+    def external_driver(argv, **kwargs):
+        return original([sys.executable, str(worker)], **kwargs)
+    monkeypatch.setattr(session_browser.subprocess, 'Popen', external_driver)
+    browser = session_browser.ServerBrowser()
+    session = ContentSession(tmp_path/'content', browser=browser, resources=ResourceGovernor(observe=lambda:observed[0]))
+    try:
+        session.open()
+        observed[0] = ResourceObservation(2*1024**3, 636911616, 0, True)
+        started = time.monotonic()
+        session.tick()
+        assert time.monotonic()-started < 1
+        assert not session.status()['browser_running']
+        assert session.status()['state'] == 'waiting_resources'
+        assert browser.last_resource_release['browser_memory_bytes'] == 636911616
+    finally:
+        session.shutdown()
+
+
+def test_pressure_close_cleans_only_its_parent_owned_display_runtime(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    from youtube_strataread.workbench import session_browser
+    from youtube_strataread.workbench.resource_governor import LinuxResources
+    observed = [ResourceObservation(2*1024**3, 0, 0, True)]
+    monkeypatch.setattr(LinuxResources, 'observe', lambda self, **_: observed[0])
+    monkeypatch.setenv('EDISON_CONTENT_BROWSER_ENABLED', '1')
+    owned = tmp_path/'owned-path.json'
+    unrelated = tmp_path/'unrelated-display'; unrelated.mkdir()
+    worker = tmp_path/'runtime-driver.py'
+    worker.write_text("""import json,pathlib,sys,time
+runtime=pathlib.Path(sys.argv[-1])
+assert runtime.is_absolute() and runtime.is_dir()
+(runtime/'Xauthority').write_text('fixture-private-display')
+pathlib.Path(sys.argv[1]).write_text(json.dumps(str(runtime)))
+print(json.dumps({'ok':True,'result':{}}),flush=True)
+time.sleep(2)
+""")
+    original = subprocess.Popen
+    monkeypatch.setattr(session_browser.subprocess, 'Popen', lambda argv, **kwargs:
+        original([sys.executable,str(worker),str(owned),*argv[3:]], **kwargs))
+    browser = session_browser.ServerBrowser()
+    try:
+        browser.start(tmp_path/'profile')
+        runtime = Path(json.loads(owned.read_text()))
+        assert (runtime/'Xauthority').exists()
+        observed[0] = ResourceObservation(2*1024**3, 636911616, 0, True)
+        with pytest.raises(ContentSessionError) as error:
+            browser.command('screen', {})
+        assert error.value.kind == 'resource'
+        assert not runtime.exists()
+        assert unrelated.exists()
+    finally:
+        browser.close()

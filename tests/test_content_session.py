@@ -21,6 +21,9 @@ class Browser:
             raise ContentSessionError("user", "请在 YouTube 页面完成登录。")
         return "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-secret\n"
 
+    def release_resources(self, observation=None):
+        self.close()
+
     def close(self):
         self.running = False
 

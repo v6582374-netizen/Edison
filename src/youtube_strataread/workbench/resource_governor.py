@@ -14,7 +14,8 @@ MIB = 1024 * 1024
 BROWSER_LIMIT = 768 * MIB
 START_AVAILABLE = 1280 * MIB
 RUN_AVAILABLE = 512 * MIB
-BROWSER_RELEASE = 608 * MIB
+# Release before the 576 MiB kernel high watermark stalls browser allocation.
+BROWSER_RELEASE = 544 * MIB
 
 
 @dataclass(frozen=True)

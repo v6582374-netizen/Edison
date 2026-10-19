@@ -14,6 +14,7 @@ import select
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -34,6 +35,9 @@ class ServerBrowser:
         self.owner_fd = owner_fd
         self.start_url = start_url
         self.process = None
+        self.last_resource_release = None
+        self._response_buffer = b""
+        self._runtime = None
 
     @property
     def resource_released(self):
@@ -54,39 +58,74 @@ class ServerBrowser:
             )
         if self.process and self.process.poll() is None:
             return
+        if self.process is not None or self._runtime is not None:
+            self.close(resource_pressure=self.resource_released)
         from youtube_strataread.workbench.resource_governor import ResourceGovernor
         ResourceGovernor().require_browser_start()
+        self.last_resource_release = None
+        self._response_buffer = b""
         profile.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                __name__,
-                str(profile),
-                self.start_url,
-                "headless" if self.headless else "headed",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            text=True,
-            bufsize=1,
-            pass_fds=(self.owner_fd,) if self.owner_fd is not None else (),
-        )
+        self._runtime = Path(tempfile.mkdtemp(prefix="edison-display-", dir="/tmp"))
         try:
+            self.process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    __name__,
+                    str(profile),
+                    self.start_url,
+                    "headless" if self.headless else "headed",
+                    str(self._runtime),
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                text=True,
+                bufsize=1,
+                pass_fds=(self.owner_fd,) if self.owner_fd is not None else (),
+            )
             self._read(timeout=45)
         except BaseException:
             self.close()
             raise
 
     def _read(self, timeout=30):
-        if not select.select([self.process.stdout], [], [], timeout)[0]:
-            self.close()
-            raise ContentSessionError("maintenance", "服务器浏览器响应超时，请关闭后重新打开。")
+        from youtube_strataread.workbench.resource_governor import ResourceGovernor
+        resources = ResourceGovernor()
+        deadline = time.monotonic() + timeout
+        while True:
+            # The child can stall inside a desktop operation. The host remains
+            # outside its cgroup and observes pressure even during partial frames.
+            state = resources.status()
+            if state["release_browser"]:
+                self.release_resources(state)
+                raise ContentSessionError("resource", "服务器资源不足，已释放登录画面；等待资源恢复。")
+            if b"\n" in self._response_buffer:
+                line, self._response_buffer = self._response_buffer.split(b"\n", 1)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise ContentSessionError("maintenance", "服务器浏览器响应超时，请关闭后重新打开。")
+            if not select.select([self.process.stdout], [], [], min(.1, remaining))[0]:
+                continue
+            try:
+                chunk = os.read(self.process.stdout.fileno(), 65536)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                released = self.resource_released
+                self.close(resource_pressure=released)
+                raise ContentSessionError(
+                    "resource" if released else "maintenance",
+                    "服务器资源不足，已释放登录画面；等待资源恢复。" if released
+                    else "服务器浏览器已退出，请检查运行环境。",
+                )
+            self._response_buffer += chunk
         try:
-            result = json.loads(self.process.stdout.readline())
-        except (ValueError, OSError):
+            result = json.loads(line)
+        except (ValueError, UnicodeError):
             self.close()
             raise ContentSessionError(
                 "maintenance", "服务器浏览器已退出，请检查运行环境。"
@@ -121,7 +160,7 @@ class ServerBrowser:
                 self.close()
             raise
         except (BrokenPipeError, OSError):
-            released = self.resource_released
+            released = self.last_resource_release is not None or self.resource_released
             self.close()
             raise ContentSessionError(
                 "resource" if released else "maintenance",
@@ -135,20 +174,36 @@ class ServerBrowser:
         finally:
             self.close()
 
-    def close(self):
+    def release_resources(self, observation=None):
+        if observation is not None:
+            self.last_resource_release = observation
+        self.close(resource_pressure=True)
+
+    def _clean_runtime(self):
+        if self._runtime is not None:
+            import shutil
+            if self._runtime.exists():
+                shutil.rmtree(self._runtime)
+            self._runtime = None
+
+    def close(self, *, resource_pressure=False):
         process = self.process
         if not process:
+            self._clean_runtime()
             return
         try:
-            if process.poll() is None:
+            if process.poll() is None and not resource_pressure:
                 process.stdin.close()  # graceful browser/profile flush on EOF
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(timeout=20)
+            # Pressure has no snapshot to publish: revoke the whole native group
+            # immediately rather than waiting for a stalled desktop/profile flush.
             # Includes orphaned Chromium descendants even if the driver exited.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
             until = time.monotonic() + 3
             while time.monotonic() < until:
+                process.poll()  # Reap the leader so it cannot keep an empty group alive.
                 try:
                     os.killpg(process.pid, 0)
                 except ProcessLookupError:
@@ -164,6 +219,8 @@ class ServerBrowser:
             if process.stdin and not process.stdin.closed:
                 process.stdin.close()
             self.process = None
+            self._response_buffer = b""
+            self._clean_runtime()
 
 
 def profile_snapshot(profile):
@@ -429,11 +486,8 @@ def _serve(profile, start_url, runtime):
             stop_desktop()
         finally:
             try:
-                try:
+                if not resource_releasing:
                     stop_browser()
-                except Exception:
-                    if not resource_releasing:
-                        raise
             finally:
                 if browser.poll() is None:
                     browser.terminate()
@@ -444,17 +498,15 @@ def _serve(profile, start_url, runtime):
                         browser.wait(timeout=3)
 
 
-def _display(root):
+def _display(runtime):
     """Dedicated authenticated X server in the same browser process group."""
     import secrets
     import shutil
-    import tempfile
     from contextlib import contextmanager
 
     @contextmanager
     def running():
-        # UNIX socket paths are short even when the stable profile path is long.
-        runtime = Path(tempfile.mkdtemp(prefix="edison-display-", dir="/tmp"))
+        # Parent owns this exact private path and also removes it on forced close.
         display = ":" + str(1000 + secrets.randbelow(50000))
         authority = runtime / "Xauthority"
         try:
@@ -506,7 +558,8 @@ def _display(root):
                     server.kill()
                     server.wait(timeout=3)
         finally:
-            shutil.rmtree(runtime)
+            if runtime.exists():
+                shutil.rmtree(runtime)
 
     return running()
 
@@ -518,7 +571,7 @@ if __name__ == "__main__":
             raise RuntimeError("native human handoff requires a Linux display")
         from youtube_strataread.workbench.resource_governor import LinuxResources
         LinuxResources.from_environment().enter_browser_group()
-        with _display(Path(sys.argv[1]).parent) as runtime:
+        with _display(Path(sys.argv[4])) as runtime:
             _serve(Path(sys.argv[1]), sys.argv[2], runtime)
     except ContentSessionError as error:
         print(json.dumps({"ok": False, "kind": error.kind}), flush=True)

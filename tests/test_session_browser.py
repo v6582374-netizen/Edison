@@ -134,28 +134,36 @@ def test_close_kills_orphaned_descendants_even_when_driver_already_exited(tmp_pa
             os.killpg(process.pid, signal.SIGKILL)
 
 
-def test_timed_out_transport_cannot_return_a_previous_commands_response(tmp_path):
+@pytest.mark.parametrize("partial", [False, True])
+def test_timed_out_transport_cannot_return_a_previous_commands_response(tmp_path, monkeypatch, partial):
     import subprocess
     import sys
 
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceObservation
+    monkeypatch.setattr(LinuxResources, "observe", lambda self, **_: ResourceObservation(2*1024**3, 0, 0, True))
     browser = ServerBrowser(command_timeout=0.05)
     worker = tmp_path / "delayed.py"
     worker.write_text("""import json,sys,time
 for line in sys.stdin:
     command=json.loads(line)['command']
+    response=json.dumps({'ok':True,'result':{'command':command}})
+    split=5 if sys.argv[1]=='partial' else 0
+    sys.stdout.write(response[:split]);sys.stdout.flush()
     time.sleep(.2)
-    print(json.dumps({'ok':True,'result':{'command':command}}),flush=True)
+    print(response[split:],flush=True)
 """)
     browser.process = subprocess.Popen(
-        [sys.executable, str(worker)],
+        [sys.executable, str(worker), "partial" if partial else "silent"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
         start_new_session=True,
     )
     try:
-        with pytest.raises(ContentSessionError, match="超时"):
+        with pytest.raises(ContentSessionError, match="超时") as error:
             browser.command("screen", {})
+        assert error.value.kind == "maintenance"
+        assert browser.last_resource_release is None
         with pytest.raises(ContentSessionError, match="退出"):
             browser.command("snapshot", {})
     finally:
@@ -352,4 +360,49 @@ def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatc
         if chrome_pid is not None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(chrome_pid, signal.SIGCONT)
+        browser.close()
+
+
+def test_idle_native_driver_releases_pressure_without_client_requests(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+    import time
+    from youtube_strataread.workbench import session_browser
+    executable = os.environ.get('EDISON_CONTENT_CHROMIUM')
+    display = os.environ.get('EDISON_CONTENT_X11VNC') or shutil.which('x11vnc')
+    if sys.platform != 'linux' or not executable or not display or not shutil.which('Xvfb'):
+        pytest.skip('Native Linux Chrome/Xvfb/x11vnc required')
+    trigger = tmp_path/'idle-pressure'
+    # Control only the child kernel observation; actual native browser/display
+    # and process lifecycle remain real. No screen command or host tick occurs.
+    driver = f'''import runpy,sys
+from pathlib import Path
+from youtube_strataread.workbench.resource_governor import LinuxResources,ResourceObservation
+original=LinuxResources.observe
+def observe(self,**kwargs):
+    state=original(self,**kwargs)
+    if Path({str(trigger)!r}).exists():
+        return ResourceObservation(state.available,636911616,state.browser_swap,state.constrained)
+    return state
+LinuxResources.observe=observe
+module=sys.argv.pop(1)
+runpy.run_module(module,run_name="__main__")
+'''
+    original_popen = subprocess.Popen
+    def native_driver(argv, **kwargs):
+        if argv[1:3] == ['-m', session_browser.__name__]:
+            argv = [sys.executable, '-c', driver, *argv[2:]]
+        return original_popen(argv, **kwargs)
+    monkeypatch.setattr(session_browser.subprocess, 'Popen', native_driver)
+    browser = ServerBrowser(start_url='about:blank')
+    try:
+        browser.start(tmp_path/'profile')
+        trigger.touch()
+        deadline = time.monotonic()+10
+        while browser.alive and time.monotonic()<deadline:
+            time.sleep(.05)
+        assert browser.resource_released
+        assert not (tmp_path/'current.cookies').exists()
+    finally:
         browser.close()

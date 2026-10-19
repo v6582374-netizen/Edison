@@ -27,13 +27,23 @@ than merely measuring launch memory. Operators must retain control-group cleanup
 on service stop. A private profile is not permission to run without kernel limits.
 
 Launch needs actual `/proc/meminfo` MemAvailable >= 1280 MiB. Once running,
-MemAvailable below 512 MiB or browser group memory >= 608 MiB triggers orderly
-browser close before the 768 MiB hard ceiling. The driver samples cheap memory
-observations every 100 ms between desktop operations; the host also checks on its
-heartbeat. Desktop listener inspection retains its separate one-second cadence.
-The 576 MiB kernel high watermark adds reclaim/throttling before the release
-threshold. It is not proof against every burst allocation: measured peak, high
-pressure, OOM counters and full close latency must be checked on the target host.
+MemAvailable below 512 MiB or browser group memory >= 544 MiB triggers
+browser release before the 576 MiB high watermark and 768 MiB hard ceiling.
+The driver samples cheap memory observations every 100 ms between desktop operations; the host also checks on its
+heartbeat. The host also observes every 100 ms while waiting for a native
+response, including partial screenshot frames, so a stalled desktop cannot suspend
+resource monitoring. It retains the triggering observation before cleanup.
+Pressure close sends termination to the whole native process group immediately
+and escalates after three seconds; it does not wait twenty seconds for profile
+flush or publish a snapshot. Heartbeat release uses the same pressure-close
+boundary; an idle native driver skips its window-close/profile-flush wait on
+resource release too. Ordinary close retains its graceful profile path. The host
+creates and owns the exact private display runtime directory passed to its child,
+and removes that directory after close even if termination bypasses child cleanup.
+Healthy-memory response timeouts remain maintenance failures. Desktop listener
+inspection retains its separate one-second cadence. The 32 MiB headroom below
+the kernel high watermark provides margin before reclaim stalls Chrome. It is
+not proof against every burst allocation: measured peak, high pressure, OOM counters and full close latency must be checked on the target host.
 A burst or unresponsive browser can still reach the hard ceiling; such a run is
 not acceptable evidence of safe coexistence.
 
