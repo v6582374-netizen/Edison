@@ -25,6 +25,7 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
   await expect.poll(async()=>(await call('library.inspect',{video_id:'load0000001'})).manuscript_version,{timeout:60000}).toBe(1);
   const blocks: Array<Record<string,unknown>>=[];
   let screenshots: ReturnType<typeof setInterval>|undefined;
+  let screenPoll: Promise<void>|undefined;
   let screenFailure='';
   let filling=true;
   let loadIndex=0;
@@ -40,12 +41,13 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
   try {
     for(const [block,maintenance] of [false,true,true,false].entries()){
       if(screenshots)clearInterval(screenshots);
+      await screenPoll;
       await native('close');
       const started=Date.now();
       if(maintenance)await native('open');
       const openMs=Date.now()-started;
       let sampling=false;
-      if(maintenance)screenshots=setInterval(()=>{if(!sampling){sampling=true;void native('screen').catch(error=>screenFailure=String(error)).finally(()=>sampling=false);}},1200);
+      if(maintenance)screenshots=setInterval(()=>{if(!sampling){sampling=true;screenPoll=native('screen').then(()=>{}).catch(error=>screenFailure=String(error)).finally(()=>sampling=false);}},1200);
       const before={activity:await call('activity.snapshot'),native:await native('status'),load:await call('library.inspect',{video_id:'load0000001'})};
       const samples:number[]=[];
       const admission=[];
@@ -89,7 +91,7 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
     expect(loadErrors).toEqual([]);
     expect(summary.increase).toBeLessThanOrEqual(summary.allowedIncrease);
   } finally {
-    filling=false;await load;if(screenshots)clearInterval(screenshots);await native('close');
+    filling=false;await load;if(screenshots)clearInterval(screenshots);await screenPoll;await native('close');
     await page.unroute('**/v1/youtube/capability');
   }
 });
