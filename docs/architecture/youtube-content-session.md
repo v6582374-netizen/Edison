@@ -149,15 +149,50 @@ native Linux protocol test exercises screenshots, synthetic input, graceful
 close, read-only profile extraction and reopen against a local HTTP page. Local
 fixture cookies remain excluded from production Google/YouTube snapshots.
 
-These are controlled functional and local-browser evidence. The earlier Playwright handoff encountered a genuine Google unsupported-browser
+The native Linux transport/lifecycle suite passed nine tests, including rejection
+of IPv4/IPv6 listeners at startup, late-listener retirement during idle and command
+handling, and ingress revocation before delayed Chrome shutdown under `SIGSTOP`.
+Normal close, cookie flushing and reopen also passed. Caption protocol validation
+passed 27 local tests and 11 tests under the isolated Linux service identity.
+These controlled tests establish their respective protocol and lifecycle behavior;
+they do not by themselves establish external YouTube availability.
+
+On 2026-10-19, the isolated deployment was exercised through the real Web UI in
+Zen with a fresh managed profile. The person completed the native sign-in flow
+and confirmed account consistency. Three fresh external subtitle acquisitions for
+video `arj7oStGLkU` passed nonempty, parseability and matching-video validation,
+without reading retained transcripts (times below are Asia/Shanghai):
+
+- 18:04:50: caption worker PID `767819` succeeded.
+- 18:05:35: with the browser closed, new worker PID `768110` succeeded.
+- 18:06:00: a normal isolated-service restart preserved the last-success history
+  and user account declaration while correctly resetting current capability to
+  unverified. At 18:07:54, new worker PID `768693` acquired fresh subtitles and
+  restored verified capability.
+
+After these checks the snapshot was owned by `edison` with mode `0600`, no
+consumer copies remained, and the browser cgroup was empty. This establishes
+fresh external caption acquisition from this managed snapshot across browser
+closure and a normal service restart. The public video does not prove that its
+subtitles required authentication. Official OAuth was not configured in the
+isolated deployment, so account consistency remains a user declaration rather
+than a verified comparison with an authorized official account.
+
+The earlier Playwright handoff encountered a genuine Google unsupported-browser
 rejection; this is consistent with Google’s documented restrictions on automated
-browsers, not a uniquely proven detection cause. The native replacement has not
-yet established genuine Google login or authenticated external subtitle success.
-See [Google supported-browser guidance](https://support.google.com/accounts/answer/7675428).
-The headed Linux deployment, natural Cookie rotation, service-account production
-permissions, whole-host crash/reboot, real busy resource coexistence, reading P95
-and 14-day trial remain unverified. Existing historical prototype success does
-not fill those gaps or establish acceptance of this fresh managed profile.
+browsers, not a uniquely proven detection cause. The successful native handoff
+above supersedes the earlier absence of fresh-profile external evidence. See
+[Google supported-browser guidance](https://support.google.com/accounts/answer/7675428).
+
+Production was unchanged. A previous real YouTube browser run exhausted its
+768 MiB cgroup limit; later functional success does not erase that resource
+failure or establish admission. Busy-workload coexistence and reading P95
+acceptance remain outstanding under [#52](https://github.com/v6582374-netizen/Edison/issues/52).
+Natural Cookie rotation, whole-host crash/reboot, production deployment and
+service-account permissions, and the 14-day trial remain unverified. A normal
+isolated-service restart is not evidence for those broader lifecycle or sustained
+availability claims. Existing historical prototype success does not fill these
+gaps.
 
 To run optional real-browser coverage, provision native Chrome, Xvfb, xauth and
 x11vnc and `ss` (iproute2) in an isolated Linux environment under the same resource cap. Configure
