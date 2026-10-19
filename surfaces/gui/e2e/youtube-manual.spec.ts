@@ -144,7 +144,7 @@ test('manual submission racing discovery merges one identity and grants no permi
   }finally{await app.close();}
 });
 
-test('English add-video page remains usable by keyboard at a narrow width',async({page,request})=>{
+test('English add-video page remains usable by keyboard at a narrow width',async({page,request,browserName})=>{
   const app=await harness(page,request,{channels:[],videos:[{id:'abcdefghijk',published:1577836800}]},true,'en');
   try {
     await page.getByRole('button',{name:'Add video',exact:true}).click();
@@ -152,8 +152,12 @@ test('English add-video page remains usable by keyboard at a narrow width',async
     const input=page.getByLabel('Video link',{exact:true});
     await input.fill('https://youtube.com/@channel'); await input.press('Enter');
     await expect(page.getByRole('status').filter({hasText:'Channels and playlist-only links are not supported.'})).toBeVisible();
-    await input.fill('https://youtu.be/abcdefghijk'); await input.press('Tab');
-    await expect(page.getByRole('button',{name:'Add and prepare'})).toBeFocused();
+    await input.fill('https://youtu.be/abcdefghijk');
+    // Safari defaults to tabbing between text controls only; Enter submits the form there.
+    if(browserName !== 'webkit') {
+      await input.press('Tab');
+      await expect(page.getByRole('button',{name:'Add and prepare'})).toBeFocused();
+    }
     await page.keyboard.press('Enter');
     await expect(page.getByRole('region',{name:'Accepted video'})).toBeVisible();
     await expect(page.getByRole('button',{name:'Open existing document'})).toBeVisible({timeout:20000});
@@ -184,5 +188,22 @@ test('unknown save result survives reload and idempotent resend without another 
     await page.getByRole('button',{name:'幂等重发'}).click();
     await expect.poll(async()=>(await app.call('activity.snapshot')).ready).toBe(1);
     expect((await app.call('library.inspect',{video_id:'abcdefghijk'})).generation_records).toHaveLength(1);
+  }finally{await app.close();}
+});
+
+test('a manual Shorts URL retains the shared Shorts exclusion',async({page,request})=>{
+  const app=await harness(page,request,{channels:[],videos:[{id:'abcdefghijk',published:1577836800,shorts:true}]});
+  try {
+    await page.getByRole('button',{name:'添加视频',exact:true}).click();
+    await page.getByLabel('视频链接',{exact:true}).fill('https://youtube.com/shorts/abcdefghijk');
+    await page.getByRole('button',{name:'添加并处理'}).click();
+    await expect(page.getByRole('region',{name:'已接收的视频'})).toBeVisible();
+    await expect.poll(async()=>(await app.call('library.inspect',{video_id:'abcdefghijk'})).preparation_state).toBe('filtered');
+    expect(await app.exists('caption-abcdefghijk')).toBe(false);
+    await page.getByRole('button',{name:'添加视频',exact:true}).click();
+    await page.getByLabel('视频链接',{exact:true}).fill('https://youtu.be/abcdefghijk');
+    await page.getByRole('button',{name:'添加并处理'}).click();
+    await expect(page.getByText('此视频是 Shorts，不能加入处理。',{exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'重试此视频'})).toHaveCount(0);
   }finally{await app.close();}
 });

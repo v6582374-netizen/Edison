@@ -13,7 +13,7 @@ export async function harness(page: Page, request: APIRequestContext, scenario: 
   const write = async (name: string, value='go') => {await writeFile(join(root,name+'.tmp'),value);await rename(join(root,name+'.tmp'),join(root,name));};
   const exists = async (name: string) => {try{await access(join(root,name));return true;}catch{return false;}};
   await write('clock',String(now));
-  await write('scenario.json',JSON.stringify(scenario));
+  await write('scenario.json',JSON.stringify({...scenario,platform_pages:true}));
   if(releaseModel) await write('model-release');
   let backend: ReturnType<typeof spawn>;
   let url = '';
@@ -60,7 +60,7 @@ export async function harness(page: Page, request: APIRequestContext, scenario: 
     await expect(page.getByRole('button',{name:on?'完成当前文档后暂停':'恢复自动更新',exact:true})).toBeEnabled();
   };
   return {root,now,write,exists,call,toggle,authorize,start,stop,address:()=>url,
-    scenario:(value: Scenario)=>write('scenario.json',JSON.stringify(value)),
+    scenario:(value: Scenario)=>write('scenario.json',JSON.stringify({...value,platform_pages:true})),
     clock:(value: number)=>write('clock',String(value)),
     requests:async()=>{try{return (await readFile(join(root,'api-requests.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));}catch{return []; }},
     close:async()=>{await stop();await rm(root,{recursive:true,force:true});},
