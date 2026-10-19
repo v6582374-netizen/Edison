@@ -32,6 +32,7 @@ export type Connection = {
   configured: boolean;
   authorized: boolean;
   subscription_count: number;
+  subscription_capability?: { state: "unverified" | "available" | "interrupted"; last_success_at?: number | null; last_failure_at?: number | null; failure_kind?: string | null; reason?: string | null; last_failure_kind?: string | null; last_failure_reason?: string | null };
 };
 export type DiscoveryState = {
   status?: string; error?: string | null; scanning?: boolean;

@@ -171,6 +171,12 @@ from .manager import SessionManager, _approval_body
 def create_app(manager: SessionManager) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if web_auth is not None:
+            # A server restart invalidates browser access, never the owner's
+            # durable background-work permission. Do not wait for a page visit.
+            from .youtube import start_youtube
+
+            start_youtube(_app, manager)
         try:
             live = (
                 await manager.start_gateway()

@@ -102,6 +102,7 @@ def test_sidecar_serves_repeated_empty_library_snapshots(tmp_path: Path) -> None
                 "configured": False,
                 "authorized": False,
                 "subscription_count": 0,
+                "subscription_capability": {"state": "unverified", "last_success_at": None, "last_failure_at": None, "failure_kind": None, "reason": None, "last_failure_kind": None, "last_failure_reason": None},
             },
         },
         {
@@ -111,6 +112,7 @@ def test_sidecar_serves_repeated_empty_library_snapshots(tmp_path: Path) -> None
                 "configured": True,
                 "authorized": False,
                 "subscription_count": 0,
+                "subscription_capability": {"state": "unverified", "last_success_at": None, "last_failure_at": None, "failure_kind": None, "reason": None, "last_failure_kind": None, "last_failure_reason": None},
             },
         },
         {
@@ -120,6 +122,7 @@ def test_sidecar_serves_repeated_empty_library_snapshots(tmp_path: Path) -> None
                 "configured": True,
                 "authorized": False,
                 "subscription_count": 0,
+                "subscription_capability": {"state": "unverified", "last_success_at": None, "last_failure_at": None, "failure_kind": None, "reason": None, "last_failure_kind": None, "last_failure_reason": None},
             },
         },
         {

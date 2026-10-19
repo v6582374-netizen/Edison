@@ -503,6 +503,8 @@
     "show_less": "Show less",
     "show_n_more": "Show {{n}} more",
     "sign_out": "Sign out",
+    "edison_sign_out": "Sign out of Edison",
+    "edison_sign_out_detail": "Authorized YouTube work continues after sign-out. Turn off Auto Update to stop automatic updates.",
     "account_aria": "Account: {{email}}",
     "account_not_signed_in_aria": "Account: not signed in",
     "not_signed_in_row": "Not signed in",

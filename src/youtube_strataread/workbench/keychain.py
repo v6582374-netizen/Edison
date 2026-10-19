@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -26,21 +28,44 @@ class ServiceAccountFile:
         self.path = path
 
     def _records(self) -> dict[str, str]:
-        if not self.path.exists():
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
             return {}
-        return json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError as error:
+            raise PermissionError("Credential storage must be an owner-only regular file") from error
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise PermissionError("Credential storage must be owned and readable only by the service account")
+            records = json.load(handle)
+        if not isinstance(records, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in records.items()):
+            raise ValueError("Invalid credential storage")
+        return records
 
     def get_password(self, service: str, account: str) -> str | None:
         return self._records().get(f"{service}/{account}")
 
     def set_password(self, service: str, account: str, value: str) -> None:
+        # A unique owner-only staging file avoids stale files, symlinks and
+        # collisions; fsync both the record and replacement directory.
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         records = {**self._records(), f"{service}/{account}": value}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        staging = self.path.with_name(self.path.name + ".tmp")
-        fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(records, handle)
-        os.replace(staging, self.path)
+        fd, staging = tempfile.mkstemp(prefix=".edison-credentials-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(records, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(staging, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(staging):
+                os.unlink(staging)
 
 
 class NativeKeychainVault:

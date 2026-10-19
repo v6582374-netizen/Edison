@@ -24,14 +24,22 @@ const apiToken = (): string =>
 
 // All local REST calls pass through this module, so a module-local wrapper applies launch
 // authentication without asking every endpoint helper to remember the security header.
-const fetch = (
+const fetch = async (
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> => {
   const headers = new Headers(init.headers);
   const token = apiToken();
   if (token) headers.set("X-OpenWorker-Token", token);
-  return globalThis.fetch(input, { ...init, headers });
+  const response = await globalThis.fetch(input, { ...init, headers });
+  if (response.status === 401) {
+    const failure = await response.clone().json().catch(() => null);
+    if (failure?.error === "login required") {
+      if (selfHostedOrigin()) globalThis.location.assign("/login");
+      throw new Error("Edison 登录已失效，请重新登录。已许可的 YouTube 后台工作继续，无需重新连接 YouTube。");
+    }
+  }
+  return response;
 };
 
 const openWebSocket = (url: string): WebSocket => {
@@ -2552,12 +2560,6 @@ export async function youtubeCapability<T>(capability: string, arguments_: Recor
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capability, arguments: arguments_ }),
   });
-  if (response.status === 401) {
-    const failure = await response.clone().json().catch(() => null);
-    if (failure?.error === "login required") {
-      throw new Error("Edison 登录已失效，请在新标签页打开 /login 重新登录，再返回重试。无需更换 YouTube Cookie。");
-    }
-  }
   if (!response.ok) throw new Error(`YouTube 服务暂时不可用 (${response.status})`);
   const data = await response.json();
   if (!data.ok) throw new Error(data.error || "操作未完成，请重试。");
