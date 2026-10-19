@@ -1,7 +1,8 @@
 /** Opt-in Linux sandbox measurement. Never targets production or a real profile. */
 import { test, expect } from './fixtures';
 import { appendFile, writeFile } from 'node:fs/promises';
-import type { Request } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import type { Request, Response } from '@playwright/test';
 
 test('A-B-B-A native maintenance and reading under the same real preparation load', async ({page,request}) => {
   const server=process.env.EDISON_RESOURCE_MEASUREMENT_URL;
@@ -9,12 +10,14 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
   test.setTimeout(1200000);
   const headers={'X-OpenWorker-Token':'content-e2e'};
   const output=process.env.EDISON_RESOURCE_MEASUREMENT_OUTPUT||'/tmp/edison-resource-measurement.json';
+  const runId=randomUUID();
+  await writeFile(output,JSON.stringify({runId,complete:false,phase:'setup',blocks:[]},null,2));
   const networkFailures:Array<Record<string,unknown>>=[];
   const journalWrites:Promise<void>[]=[];
   let phase='setup';let sample=-1;
   await writeFile(output+'.events.jsonl','');
   const record=(event:Record<string,unknown>)=>{
-    const pending=appendFile(output+'.events.jsonl',JSON.stringify({at:Date.now(),phase,sample,...event})+'\n');
+    const pending=appendFile(output+'.events.jsonl',JSON.stringify({runId,at:Date.now(),phase,sample,...event})+'\n');
     journalWrites.push(pending);return pending;
   };
   const failed=(req:Request,status?:number)=>{
@@ -22,10 +25,26 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
     const failure={phase,sample,capability:req.method()==='POST'?req.postDataJSON()?.capability:'preflight',status,error:req.failure()?.errorText};
     networkFailures.push(failure);void record({kind:'network_failure',...failure});
   };
-  page.on('requestfailed',req=>failed(req));
-  page.on('response',response=>{if(response.status()>=400)failed(response.request(),response.status());});
+  const requestFailed=(req:Request)=>failed(req);
+  const responseReceived=(response:Response)=>{if(response.status()>=400)failed(response.request(),response.status());};
+  page.on('requestfailed',requestFailed);
+  page.on('response',responseReceived);
   const call=async(capability:string,args={})=>{const payload=await(await request.post(server!+'/v1/youtube/capability',{headers,data:{capability,arguments:args}})).json();expect(payload.ok,payload.error).toBe(true);return payload.result;};
-  const native=async(operation:string)=>{const response=await request.post(server!+'/_measurement/native',{headers,data:{operation}});expect(response.ok()).toBe(true);return response.json();};
+  let nativeTouched=false;
+  const native=async(operation:string)=>{nativeTouched=true;const response=await request.post(server!+'/_measurement/native',{headers,data:{operation}});expect(response.ok()).toBe(true);return response.json();};
+  const blocks: Array<Record<string,unknown>>=[];
+  let screenshots: ReturnType<typeof setInterval>|undefined;
+  let screenPoll: Promise<void>|undefined;
+  let screenFailure='';
+  let filling=false;
+  let load:Promise<void>=Promise.resolve();
+  let documentCharacters=0;
+  let summary:Record<string,number>|undefined;
+  let primaryError:unknown;
+  const cleanupErrors:string[]=[];
+  let loadIndex=0;
+  const loadErrors:string[]=[];
+  try {
   // Browser-native transport includes the real API token and CORS path. It
   // bypasses only the generic UI fixture route, with no Node HTTP forwarding.
   await page.route('**/v1/youtube/capability',route=>route.continue());
@@ -42,25 +61,20 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
   await call('manual.submit',{url:'https://youtu.be/read0000001',request_id:'measurement-reader'});
   await expect.poll(async()=>(await call('library.inspect',{video_id:'read0000001'})).manuscript_version,{timeout:60000}).toBe(1);
   const document=await call('documents.get',{video_id:'read0000001'});
+  documentCharacters=document.markdown.length;
   const signature='Readers can compare the source with the translation and return to their saved place.';
   await call('manual.submit',{url:'https://youtu.be/load0000001',request_id:'measurement-background'});
   await expect.poll(async()=>(await call('library.inspect',{video_id:'load0000001'})).manuscript_version,{timeout:60000}).toBe(1);
-  const blocks: Array<Record<string,unknown>>=[];
-  let screenshots: ReturnType<typeof setInterval>|undefined;
-  let screenPoll: Promise<void>|undefined;
-  let screenFailure='';
-  let filling=true;
-  let loadIndex=0;
-  const loadErrors:string[]=[];
+
+  filling=true;
   // Repeated explicit regeneration of one retained transcript: the same input
   // and real translation/checkpoint/composition/persistence work in every arm.
-  const load=(async()=>{while(filling){
+  load=(async()=>{while(filling){
     try {const asset=await call('library.inspect',{video_id:'load0000001'});if(asset.preparation_state==='ready'){
       await call('library.regenerate',{video_id:'load0000001'});loadIndex++;
     }} catch(error){loadErrors.push(String(error));}
     await new Promise(resolve=>setTimeout(resolve,250));
   }})();
-  try {
     for(const [block,maintenance] of [false,true,true,false].entries()){
       phase=`${block}-${maintenance?'maintenance':'baseline'}`;sample=-1;
       expect(networkFailures).toEqual([]);
@@ -110,7 +124,7 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
       page.off('request',observer);
       const after={activity:await call('activity.snapshot'),native:await native('status'),load:await call('library.inspect',{video_id:'load0000001'})};
       Object.assign(current,{documentRequests,after,screenFailure,elapsedMs:Date.now()-started,complete:true});
-      await writeFile(output,JSON.stringify({complete:false,transport:'browser-direct',blocks,networkFailures,documentCharacters:document.markdown.length,loadIndex,loadErrors},null,2));
+      await writeFile(output,JSON.stringify({runId,complete:false,transport:'browser-direct',blocks,networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
       // React's development StrictMode can issue two effect reads per mount;
       // each opening above must still perform a fresh request. Report the count.
       expect(documentRequests).toBeGreaterThanOrEqual(60);
@@ -121,24 +135,33 @@ test('A-B-B-A native maintenance and reading under the same real preparation loa
     const p95=(values:number[])=>[...values].sort((a,b)=>a-b)[Math.ceil(.95*values.length)-1];
     const baseline=blocks.filter(block=>!block.maintenance).flatMap(block=>block.samples as number[]);
     const maintenance=blocks.filter(block=>block.maintenance).flatMap(block=>block.samples as number[]);
-    const summary={baselineSamples:baseline.length,maintenanceSamples:maintenance.length,baselineP95:p95(baseline),maintenanceP95:p95(maintenance),allowedIncrease:Math.max(.2*p95(baseline),200),increase:p95(maintenance)-p95(baseline)};
-    await writeFile(output,JSON.stringify({complete:true,transport:'browser-direct',blocks,summary,networkFailures,documentCharacters:document.markdown.length,loadIndex,loadErrors},null,2));
+    summary={baselineSamples:baseline.length,maintenanceSamples:maintenance.length,baselineP95:p95(baseline),maintenanceP95:p95(maintenance),allowedIncrease:Math.max(.2*p95(baseline),200),increase:p95(maintenance)-p95(baseline)};
     expect(networkFailures).toEqual([]);
     expect(loadErrors).toEqual([]);
     expect(summary.increase).toBeLessThanOrEqual(summary.allowedIncrease);
   } catch(error) {
-    await writeFile(output,JSON.stringify({complete:false,failure:String(error).split('\n')[0],phase,sample,transport:'browser-direct',blocks,networkFailures,documentCharacters:document.markdown.length,loadIndex,loadErrors},null,2));
-    throw error;
+    primaryError=error;
   } finally {
+    filling=false;if(screenshots)clearInterval(screenshots);
+    const cleanup=async(action:()=>Promise<unknown>)=>{try{await action();}catch(error){cleanupErrors.push(String(error).split('\n')[0]);}};
+    await cleanup(()=>load);
+    await cleanup(async()=>screenPoll);
+    if(nativeTouched)await cleanup(()=>native('close'));
+    await cleanup(()=>page.unroute('**/v1/youtube/capability'));
+    page.off('requestfailed',requestFailed);page.off('response',responseReceived);
+    await cleanup(()=>Promise.all(journalWrites));
+    const complete=!primaryError && !cleanupErrors.length && !networkFailures.length && !loadErrors.length && !!summary;
     try {
-      filling=false;await load;if(screenshots)clearInterval(screenshots);await screenPoll;await native('close');
-      await page.unroute('**/v1/youtube/capability');
-      await Promise.all(journalWrites);
-      expect(networkFailures).toEqual([]);
-      expect(loadErrors).toEqual([]);
+      await writeFile(output,JSON.stringify({runId,complete,failure:primaryError?String(primaryError).split('\n')[0]:undefined,
+        phase,sample,cleanupErrors,transport:'browser-direct',blocks,summary:complete?summary:undefined,
+        networkFailures,documentCharacters,loadIndex,loadErrors},null,2));
     } catch(error) {
-      await writeFile(output,JSON.stringify({complete:false,failure:String(error).split('\n')[0],phase:'cleanup',transport:'browser-direct',blocks,networkFailures,documentCharacters:document.markdown.length,loadIndex,loadErrors},null,2));
-      throw error;
+      // The early incomplete marker remains; preserve the initiating failure.
+      if(!primaryError)primaryError=error;
     }
   }
+  if(primaryError)throw primaryError;
+  expect(cleanupErrors).toEqual([]);
+  expect(networkFailures).toEqual([]);
+  expect(loadErrors).toEqual([]);
 });
