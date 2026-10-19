@@ -130,7 +130,10 @@ class ContentSession:
             self._claim()
             if self._running and hasattr(self._browser, "alive") and not self._browser.alive:
                 released = getattr(self._browser, "resource_released", False)
-                self._browser.close()
+                if released:
+                    self._browser.release_resources()
+                else:
+                    self._browser.close()
                 self._running = False
                 if released and self.resources:
                     self.resources.browser_released()
@@ -229,7 +232,10 @@ class ContentSession:
                 result = self._browser.command(command, arguments or {})
             except (ContentSessionError, OSError) as error:
                 if not isinstance(error, ContentSessionError) or error.kind in {"maintenance", "resource"}:
-                    self._browser.close()
+                    if isinstance(error, ContentSessionError) and error.kind == "resource":
+                        self._browser.release_resources()
+                    else:
+                        self._browser.close()
                     self._running = False
                     if isinstance(error, ContentSessionError) and error.kind == "resource" and self.resources:
                         self.resources.browser_released()
@@ -253,7 +259,7 @@ class ContentSession:
                 self.status()
             state = self.resources.status()
             if self._running and state["release_browser"]:
-                self._browser.close()
+                self._browser.release_resources(state)
                 self._running = False
                 self._open_pending = True
                 self.resources.browser_released()

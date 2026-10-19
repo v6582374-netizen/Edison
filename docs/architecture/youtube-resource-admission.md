@@ -35,7 +35,11 @@ response, including partial screenshot frames, so a stalled desktop cannot suspe
 resource monitoring. It retains the triggering observation before cleanup.
 Pressure close sends termination to the whole native process group immediately
 and escalates after three seconds; it does not wait twenty seconds for profile
-flush or publish a snapshot. Ordinary close retains its graceful profile path.
+flush or publish a snapshot. Heartbeat release uses the same pressure-close
+boundary; an idle native driver skips its window-close/profile-flush wait on
+resource release too. Ordinary close retains its graceful profile path. The host
+creates and owns the exact private display runtime directory passed to its child,
+and removes that directory after close even if termination bypasses child cleanup.
 Healthy-memory response timeouts remain maintenance failures. Desktop listener
 inspection retains its separate one-second cadence. The 32 MiB headroom below
 the kernel high watermark provides margin before reclaim stalls Chrome. It is

@@ -54,6 +54,9 @@ class Browser:
     def start(self, profile):
         profile.mkdir(parents=True, exist_ok=True)
         (root / 'browser-running').touch()
+    def release_resources(self, observation=None):
+        self.close()
+
     def close(self):
         (root / 'browser-running').unlink(missing_ok=True)
     def snapshot(self):

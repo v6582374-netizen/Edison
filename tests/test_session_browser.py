@@ -361,3 +361,48 @@ def test_native_handoff_retires_listener_opened_after_start(tmp_path, monkeypatc
             with contextlib.suppress(ProcessLookupError):
                 os.kill(chrome_pid, signal.SIGCONT)
         browser.close()
+
+
+def test_idle_native_driver_releases_pressure_without_client_requests(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+    import time
+    from youtube_strataread.workbench import session_browser
+    executable = os.environ.get('EDISON_CONTENT_CHROMIUM')
+    display = os.environ.get('EDISON_CONTENT_X11VNC') or shutil.which('x11vnc')
+    if sys.platform != 'linux' or not executable or not display or not shutil.which('Xvfb'):
+        pytest.skip('Native Linux Chrome/Xvfb/x11vnc required')
+    trigger = tmp_path/'idle-pressure'
+    # Control only the child kernel observation; actual native browser/display
+    # and process lifecycle remain real. No screen command or host tick occurs.
+    driver = f'''import runpy,sys
+from pathlib import Path
+from youtube_strataread.workbench.resource_governor import LinuxResources,ResourceObservation
+original=LinuxResources.observe
+def observe(self,**kwargs):
+    state=original(self,**kwargs)
+    if Path({str(trigger)!r}).exists():
+        return ResourceObservation(state.available,636911616,state.browser_swap,state.constrained)
+    return state
+LinuxResources.observe=observe
+module=sys.argv.pop(1)
+runpy.run_module(module,run_name="__main__")
+'''
+    original_popen = subprocess.Popen
+    def native_driver(argv, **kwargs):
+        if argv[1:3] == ['-m', session_browser.__name__]:
+            argv = [sys.executable, '-c', driver, *argv[2:]]
+        return original_popen(argv, **kwargs)
+    monkeypatch.setattr(session_browser.subprocess, 'Popen', native_driver)
+    browser = ServerBrowser(start_url='about:blank')
+    try:
+        browser.start(tmp_path/'profile')
+        trigger.touch()
+        deadline = time.monotonic()+10
+        while browser.alive and time.monotonic()<deadline:
+            time.sleep(.05)
+        assert browser.resource_released
+        assert not (tmp_path/'current.cookies').exists()
+    finally:
+        browser.close()
