@@ -100,6 +100,7 @@ class PreparationService:
     captions: CaptionAcquirer
     manuscripts: ManuscriptGenerator
     shorts: ShortsClassifier = field(default_factory=YouTubeShortsClassifier)
+    resources: object = None
     _claim_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _stopping: bool = field(default=False, init=False, repr=False)
 
@@ -120,6 +121,9 @@ class PreparationService:
         if not self.workspace.caption_check_allowed(video_id):
             return True
         if isinstance(error, YouTubeRequestsStopped) or getattr(error, "kind", None) == "invalidated":
+            self.workspace.set_preparation_state(video_id, "queued")
+            return True
+        if getattr(error, "kind", None) == "resource":
             self.workspace.set_preparation_state(video_id, "queued")
             return True
         limited = rate_limit_error(error, now=self.workspace.now())
@@ -162,7 +166,8 @@ class PreparationService:
         with self._claim_lock:
             if self._stopping:
                 return False
-            asset = self.workspace.claim_next_queued_asset(self.model_account)
+            acquisition_allowed = not self.resources or not self.resources.status()["captions_waiting"]
+            asset = self.workspace.claim_next_queued_asset(self.model_account, acquisition_allowed=acquisition_allowed)
         if asset is None:
             return False
         needs_acquisition = not self.workspace.retained_transcript(str(asset["video_id"]))
@@ -218,6 +223,8 @@ class PreparationService:
                 acquisition_sequence = self.workspace.youtube_requests.snapshot().get("failure_sequence", 0)
                 if isinstance(self.captions, YtDlpCaptions):
                     def before_subtitles(info: dict[str, Any]) -> None:
+                        if self.resources:
+                            self.resources.require_captions()
                         if info.get('id') != video_id:
                             raise YouTubeError('Subtitle identity does not match the requested video')
                         allowed = {'not_live', 'was_live', 'post_live'} if completed_event else {'not_live'}

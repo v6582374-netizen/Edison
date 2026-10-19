@@ -8,6 +8,8 @@ from youtube_strataread.workbench.session_browser import ServerBrowser
 
 
 def test_web_content_handoff_reports_login_pending(tmp_path, monkeypatch):
+    from youtube_strataread.workbench.resource_governor import LinuxResources, ResourceObservation
+    monkeypatch.setattr(LinuxResources, "observe", lambda self: ResourceObservation(2*1024**3, 0, 0, True))
     monkeypatch.setenv("YOUTUBE_WORKBENCH_WORKSPACE", str(tmp_path / "library"))
     monkeypatch.setenv("EDISON_CONTENT_SESSION_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("EDISON_CREDENTIAL_FILE", str(tmp_path / "credentials.json"))

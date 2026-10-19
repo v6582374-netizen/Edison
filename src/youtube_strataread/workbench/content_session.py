@@ -56,7 +56,7 @@ class Snapshot:
 
 
 class ContentSession:
-    def __init__(self, root: Path, *, browser=None, now=time.time):
+    def __init__(self, root: Path, *, browser=None, now=time.time, resources=None):
         self.root = root.resolve()
         self.now = now
         self._lock = threading.RLock()
@@ -67,6 +67,8 @@ class ContentSession:
         self._last_input = 0.0
         self._browser = browser
         self._state = {}
+        self.resources = resources
+        self._open_pending = False
 
     def _claim(self):
         if self._retired:
@@ -120,15 +122,22 @@ class ContentSession:
         with self._lock:
             self._claim()
             if self._running and hasattr(self._browser, "alive") and not self._browser.alive:
+                released = getattr(self._browser, "resource_released", False)
                 self._browser.close()
                 self._running = False
-                self.record_failure(
-                    ContentSessionError("maintenance", "服务器浏览器意外退出，请检查运行环境。")
-                )
+                if released and self.resources:
+                    self.resources.browser_released()
+                    self._open_pending = True
+                self.record_failure(ContentSessionError(
+                    "resource" if released else "maintenance",
+                    "维护浏览器已因资源压力关闭，稍后再检查资源。" if released
+                    else "服务器浏览器意外退出，请检查运行环境。"))
             error = self._state.get("failure_kind")
             return {
                 "state": (
-                    "needs_user"
+                    "waiting_resources"
+                    if error == "resource"
+                    else "needs_user"
                     if error == "user"
                     else "needs_maintenance"
                     if error == "maintenance"
@@ -139,6 +148,8 @@ class ContentSession:
                     else "unverified"
                 ),
                 "browser_running": self._running,
+                "browser_pending": self._open_pending,
+                "resources": self.resources.status() if self.resources else None,
                 "snapshot_present": (self.root / "current.cookies").exists(),
                 "account_consistency": self._state.get("account_consistency"),
                 "last_success_at": self._state.get("last_success_at"),
@@ -158,18 +169,36 @@ class ContentSession:
                 yield
             except (ContentSessionError, OSError) as error:
                 safe = content_failure(error)
+                if safe.kind != "resource":
+                    self._open_pending = False
                 self.record_failure(safe)
                 raise safe from None
 
     def open(self):
         with self._control():
+            self._last_input = self.now()
+            self._open_pending = True
             if not self._running:
+                if self.resources:
+                    self.resources.require_browser_start()
                 if self._browser is None:
                     from youtube_strataread.workbench.session_browser import ServerBrowser
 
                     self._browser = ServerBrowser(owner_fd=self._owner.fileno())
-                self._browser.start(self.root / "profile")
+                try:
+                    self._browser.start(self.root / "profile")
+                except BaseException as error:
+                    if isinstance(error, ContentSessionError) and error.kind == "resource":
+                        if self.resources:
+                            self.resources.browser_released()
+                    else:
+                        self._open_pending = False
+                    raise
                 self._running = True
+            self._open_pending = False
+            if self._state.get("failure_kind") == "resource":
+                self._state.update(failure_kind=None, reason=None)
+                self._save()
             self._last_input = self.now()
             return self.status()
 
@@ -180,9 +209,12 @@ class ContentSession:
             try:
                 result = self._browser.command(command, arguments or {})
             except (ContentSessionError, OSError) as error:
-                if not isinstance(error, ContentSessionError) or error.kind == "maintenance":
+                if not isinstance(error, ContentSessionError) or error.kind in {"maintenance", "resource"}:
                     self._browser.close()
                     self._running = False
+                    if isinstance(error, ContentSessionError) and error.kind == "resource" and self.resources:
+                        self.resources.browser_released()
+                        self._open_pending = True
                 raise
             if command != "screen":
                 self._last_input = self.now()
@@ -190,11 +222,35 @@ class ContentSession:
 
     def tick(self):
         with self._lock:
-            if self._running and self.now() >= self._last_input + 900:
+            if (self._running or self._open_pending) and self.now() >= self._last_input + 900:
                 self.close_browser()
+                return
+            if not self.resources:
+                return
+            if self._running and hasattr(self._browser, "alive") and not self._browser.alive:
+                self.status()
+            state = self.resources.status()
+            if self._running and state["release_browser"]:
+                self._browser.close()
+                self._running = False
+                self._open_pending = True
+                self.resources.browser_released()
+                self.record_failure(ContentSessionError("resource", state["reason"]))
+            elif self._open_pending and not state["browser_waiting"]:
+                last_input = self._last_input
+                try:
+                    self.open()
+                except (ContentSessionError, OSError):
+                    pass
+                finally:
+                    self._last_input = last_input
+            elif not self._open_pending and not state["captions_waiting"] and self._state.get("failure_kind") == "resource":
+                self._state.update(failure_kind=None, reason=None)
+                self._save()
 
     def close_browser(self):
         with self._control():
+            self._open_pending = False
             if self._running:
                 self._browser.close()
                 self._running = False
@@ -253,6 +309,8 @@ class ContentSession:
             self._claim()
             lease = Snapshot(self.root / "current.cookies", self._state["generation"])
         try:
+            if self.resources:
+                self.resources.require_captions()
             with self.snapshot() as lease:
                 result = fetch(f"https://www.youtube.com/watch?v={video_id}", lease.path)
                 self.accept(lease, result, video_id)
@@ -263,6 +321,8 @@ class ContentSession:
 
     @contextmanager
     def snapshot(self):
+        if self.resources:
+            self.resources.require_captions()
         with self._lock:
             self._claim()
             current = self.root / "current.cookies"
@@ -306,7 +366,8 @@ class ContentSession:
                 self.assert_current(lease)
             if self._retired or error.kind == "invalidated":
                 return
-            self._verified = False
+            if error.kind != "resource":
+                self._verified = False
             self._state.update(
                 last_failure_at=self.now(), failure_kind=error.kind, reason=str(error)
             )

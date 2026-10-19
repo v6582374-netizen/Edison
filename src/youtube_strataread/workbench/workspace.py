@@ -258,7 +258,7 @@ class LocalWorkspace:
                 [(channel,) for channel in sorted(set(channels))],
             )
 
-    def claim_next_queued_asset(self, model_account: str | None = None) -> dict[str, object] | None:
+    def claim_next_queued_asset(self, model_account: str | None = None, *, acquisition_allowed=True) -> dict[str, object] | None:
         """Atomically honour drain pause and claim exactly one runnable asset.
 
         Waiting work yields: a subtitle cooldown only withholds work that still
@@ -299,7 +299,7 @@ class LocalWorkspace:
                   AND (shorts_status != 'short' OR manuscript_version IS NOT NULL)
                 ORDER BY discovered_at ASC LIMIT 1
                 """,
-                (now, now, int(paused is None or paused[0] == "1"), int(captions_cooling), int(model_limited)),
+                (now, now, int(paused is None or paused[0] == "1"), int(captions_cooling or not acquisition_allowed), int(model_limited)),
             ).fetchone()
             if row is None:
                 connection.execute("COMMIT")
