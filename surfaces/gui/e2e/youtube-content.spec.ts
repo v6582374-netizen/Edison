@@ -4,7 +4,8 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-test('server content login requires captions and survives closed browser, new workers and host restart', async ({ page, request, context, browserName }) => {
+for (const initialStatus of ['failure', 'stale success'] as const) {
+test(`server content login survives delayed initial ${initialStatus}, closed browser, new workers and host restart`, async ({ page, request, context, browserName }) => {
   test.setTimeout(120000);
   const root = await mkdtemp(join(tmpdir(), 'edison-content-'));
   let backend: ChildProcess;
@@ -40,6 +41,12 @@ test('server content login requires captions and survives closed browser, new wo
     const response = await request.post(url + '/v1/youtube/capability', {headers: {'X-OpenWorker-Token':'content-e2e'}, data: {capability, arguments:args}});
     const value = await response.json(); expect(value.ok, value.error).toBe(true); return value.result;
   };
+  let restarting = false;
+  let holdInitialStatus = true;
+  let releaseInitialStatus!: () => void;
+  let initialStatusCaptured!: () => void;
+  const initialStatusReady = new Promise<void>(resolve => { initialStatusCaptured = resolve; });
+  const delayedInitialStatus = new Promise<void>(resolve => { releaseInitialStatus = resolve; });
   let failOpen = true;
   let loseScreen = false;
   let releaseOpen!: () => void;
@@ -48,6 +55,15 @@ test('server content login requires captions and survives closed browser, new wo
     await advance(0); await start();
     await page.route('**/v1/youtube/capability', async route => {
       const capability = route.request().postDataJSON().capability;
+      if (capability === 'content_session.status' && holdInitialStatus) {
+        const response = await route.fetch({url: url + '/v1/youtube/capability', headers:{...route.request().headers(), 'X-OpenWorker-Token':'content-e2e'}});
+        initialStatusCaptured();
+        await delayedInitialStatus;
+        if (initialStatus === 'failure') await route.abort('failed');
+        else await route.fulfill({response});
+        return;
+      }
+      if (capability === 'content_session.open') holdInitialStatus = false;
       if (capability === 'content_session.open' && failOpen) {
         await delayedOpen;
         await route.abort('failed');
@@ -57,8 +73,14 @@ test('server content login requires captions and survives closed browser, new wo
         await route.abort('failed');
         return;
       }
-      const response = await route.fetch({url: url + '/v1/youtube/capability', headers:{...route.request().headers(), 'X-OpenWorker-Token':'content-e2e'}});
-      await route.fulfill({response});
+      try {
+        const response = await route.fetch({url: url + '/v1/youtube/capability', headers:{...route.request().headers(), 'X-OpenWorker-Token':'content-e2e'}});
+        await route.fulfill({response});
+      } catch (error) {
+        // Background UI polls can reach the deliberately stopped host during restart.
+        if (!restarting) throw error;
+        await route.abort('connectionrefused');
+      }
     });
     await page.addInitScript(() => localStorage.setItem('openworker.lang','zh'));
     await page.goto('/'); await page.getByTestId('nav-youtube').click();
@@ -73,6 +95,7 @@ test('server content login requires captions and survives closed browser, new wo
     await expect(content.getByRole('status')).toHaveText('字幕能力尚未验证');
     await expect(page.getByRole('region', {name:'Google 官方授权'}).getByText(/Google 官方授权尚未配置/)).toBeVisible();
     await expect(content.getByText('打开登录画面只会启动服务器浏览器，不会替你登录。')).toBeVisible();
+    await initialStatusReady;
     await content.getByRole('button',{name:'打开登录画面', exact:true}).click();
     await expect(content.getByRole('button',{name:'正在打开登录画面…'})).toBeDisabled();
     releaseOpen();
@@ -83,6 +106,13 @@ test('server content login requires captions and survives closed browser, new wo
     await content.getByRole('button',{name:'重试连接', exact:true}).click();
     await expect(content.getByAltText('服务器登录页面')).toBeVisible();
     await expect(content.getByText('请在下方 YouTube 页面右上角点击“登录 / Sign in”，再在 Google 页面输入账号、密码和验证码。')).toBeVisible();
+    // A response started before open must not retire the fresh view or restore browser_running=false.
+    const nextScreen = page.waitForRequest(request => request.url().includes('/v1/youtube/capability') && request.postDataJSON()?.capability === 'content_session.screen', {timeout: 5000});
+    releaseInitialStatus();
+    await nextScreen;
+    await expect(content.getByRole('button', {name:'刷新登录画面', exact:true})).toBeVisible();
+    await expect(content.getByAltText('服务器登录页面')).toBeVisible();
+    await expect(content.getByRole('alert')).toHaveCount(0);
     loseScreen = true;
     await expect(content.getByRole('alert')).toContainText('登录画面连接已中断');
     await expect(content.getByAltText('服务器登录页面')).toHaveCount(0);
@@ -126,7 +156,9 @@ test('server content login requires captions and survives closed browser, new wo
     await expect(content.getByRole('button',{name:'打开登录画面',exact:true})).toBeVisible();
     await advance(); await content.getByRole('button',{name:'重新实际获取字幕'}).click();
     await expect(content.getByRole('button',{name:'重新实际获取字幕'})).toBeEnabled();
+    restarting = true;
     await stop(); await start(); await advance();
+    restarting = false;
     await content.getByRole('button',{name:'重新实际获取字幕'}).click();
     await expect(content.getByRole('status')).toHaveText('字幕能力已验证');
     expect((await call('content_session.status')).browser_running).toBe(false);
@@ -151,5 +183,6 @@ test('server content login requires captions and survives closed browser, new wo
     await advance(901);
     await expect.poll(async ()=>(await call('content_session.status')).browser_running,{timeout:10000}).toBe(false);
     await page.reload();
-  } finally { releaseOpen(); await stop(); await rm(root,{recursive:true,force:true}); }
+  } finally { releaseInitialStatus(); releaseOpen(); await page.unrouteAll({behavior: 'wait'}); await stop(); await rm(root,{recursive:true,force:true}); }
 });
+}

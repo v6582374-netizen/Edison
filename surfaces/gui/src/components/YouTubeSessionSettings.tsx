@@ -41,9 +41,11 @@ export function YouTubeSessionSettings() {
   };
   useEffect(() => {
     let active = true;
+    const observed = revision.current;
+    const current = () => active && observed === revision.current;
     void youtubeCapability<ContentSessionStatus>("content_session.status")
-      .then(value => { if (active) setStatus(value); })
-      .catch(failure => { if (active) failed(failure, false, "status"); });
+      .then(value => { if (current()) setStatus(value); })
+      .catch(failure => { if (current()) failed(failure, false, "status"); });
     return () => { active = false; revision.current++; };
   }, []);
   useEffect(() => {
