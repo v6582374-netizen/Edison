@@ -242,30 +242,23 @@ it("never exposes the previous document after the next inspection fails", async 
   ).toBeNull();
 });
 
-it("shows the verified connection on the channel button, including after authorization and disconnect", async () => {
+it("shows the verified connection on the channel button, and removes it after unified disconnect", async () => {
   const implementation = call.getMockImplementation()!;
-  let connected = false;
+  let connected = true;
   call.mockImplementation(async (capability, args) => {
-    if (capability === "connection.authorize") connected = true;
     if (capability === "connection.disconnect") connected = false;
     if (capability.startsWith("connection."))
-      return { configured: true, authorized: connected, subscription_count: 3 };
+      return { configured: true, authorized: connected, subscription_count: 3, managed_content: true,
+        disconnection: connected ? {} : { local: "cleared", google: "revoked" } };
     return implementation(capability, args);
   });
   renderDocuments(() => {});
   fireEvent.click(screen.getByRole("button", { name: "订阅频道" }));
-  fireEvent.click(await screen.findByRole("button", { name: "连接 YouTube" }));
-  fireEvent.click(
-    await screen.findByRole("button", { name: "在浏览器中授权并导入订阅" }),
-  );
-  await screen.findByText("YouTube 已连接，已导入 3 个订阅。");
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  fireEvent.click(screen.getByRole("button", { name: "订阅频道" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "已连接 YouTube" }),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "断开授权" }));
-  await screen.findByText("YouTube 授权已断开，已有文档仍保留。");
+  fireEvent.click(await screen.findByRole("button", { name: "断开 YouTube" }));
+  await screen.findByText("本实例已清除 Google 官方授权与 YouTube 内容会话。");
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   fireEvent.click(screen.getByRole("button", { name: "订阅频道" }));
   expect(

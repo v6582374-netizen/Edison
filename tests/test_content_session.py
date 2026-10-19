@@ -290,3 +290,170 @@ def test_profile_owner_remains_exclusive_after_browser_closes_during_extraction(
             release.set()
         assert checking.result()["state"] == "available"
     session.shutdown()
+
+
+def test_failed_browser_close_still_withdraws_content_permission(tmp_path):
+    class UncooperativeBrowser(Browser):
+        fail = False
+        def close(self):
+            if self.fail:
+                raise OSError('browser still stopping')
+            super().close()
+    browser = UncooperativeBrowser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / 'session', browser=browser)
+    session.open()
+    session.confirm('abcdefghijk', same_account=True,
+        fetch=lambda *args: SubtitleResult('abcdefghijk', 'T', 'en', False, SRT))
+    session.open()
+    with session.snapshot() as lease:
+        browser.fail = True
+        with pytest.raises(ContentSessionError):
+            session.clear()
+        with pytest.raises(ContentSessionError, match='清理'):
+            session.open()
+        with pytest.raises(ContentSessionError):
+            session.confirm('abcdefghijk', same_account=True, fetch=lambda *args: None)
+        with pytest.raises(ContentSessionError, match='旧请求'):
+            session.accept(lease, SubtitleResult('abcdefghijk', 'T', 'en', False, SRT), 'abcdefghijk')
+        with pytest.raises(ContentSessionError), session.snapshot():
+            pytest.fail('withdrawn credentials remain usable')
+    browser.fail = False
+    session.shutdown()
+    restarted = ContentSession(tmp_path / 'session', browser=Browser())
+    assert restarted.status()['state'] == 'disconnected'
+    assert not restarted.status()['snapshot_present']
+    restarted.shutdown()
+
+
+@pytest.mark.parametrize('failed_path', ['consumers', 'current.cookies', 'state.json'])
+def test_cleanup_io_failure_stops_browser_and_caption_use(tmp_path, monkeypatch, failed_path):
+    import os
+    import shutil
+    import sys
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    from youtube_strataread.workbench.caption_process import CaptionProcess
+    from youtube_strataread.workbench.library import YtDlpCaptions
+
+    browser = Browser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / 'session', browser=browser)
+    session.open()
+    session.confirm('abcdefghijk', same_account=True,
+        fetch=lambda *args: SubtitleResult('abcdefghijk', 'T', 'en', False, SRT))
+    session.open()
+    worker = tmp_path / 'waiting.py'
+    marker, release = tmp_path / 'pid', tmp_path / 'release'
+    worker.write_text('import json,os,sys,time\nfrom pathlib import Path\npayload=json.loads(sys.stdin.readline())\nPath(sys.argv[1]).write_text(str(os.getpid()))\nwhile not Path(sys.argv[2]).exists(): time.sleep(.01)\nprint(json.dumps({"event":"error","kind":"network"}),flush=True)\n')
+    def command(self, command=None):
+        self.command = [sys.executable, str(worker), str(marker), str(release)]
+    monkeypatch.setattr(CaptionProcess, '__init__', command)
+    with ThreadPoolExecutor() as pool:
+        pending = pool.submit(YtDlpCaptions(content_session=session).acquire, 'https://youtu.be/abcdefghijk?v=abcdefghijk')
+        deadline = time.monotonic()+3
+        while not marker.exists() and time.monotonic()<deadline:
+            time.sleep(.01)
+        assert marker.exists()
+        original_remove, original_unlink, original_replace = shutil.rmtree, Path.unlink, os.replace
+        def remove(path, *args, **kwargs):
+            if failed_path == 'consumers' and Path(path) == session.root / failed_path:
+                raise PermissionError('controlled cleanup failure')
+            return original_remove(path, *args, **kwargs)
+        def unlink(path, *args, **kwargs):
+            if failed_path == 'current.cookies' and path == session.root / failed_path:
+                raise PermissionError('controlled cleanup failure')
+            return original_unlink(path, *args, **kwargs)
+        def replace(source, destination):
+            if failed_path == 'state.json' and Path(destination) == session.root / failed_path:
+                raise PermissionError('controlled cleanup failure')
+            return original_replace(source, destination)
+        monkeypatch.setattr(shutil, 'rmtree', remove)
+        monkeypatch.setattr(Path, 'unlink', unlink)
+        monkeypatch.setattr(os, 'replace', replace)
+        try:
+            with pytest.raises((OSError, ContentSessionError)):
+                session.clear()
+            assert not browser.running
+            with pytest.raises(ContentSessionError):
+                pending.result(timeout=2)
+            with pytest.raises(ProcessLookupError):
+                os.kill(int(marker.read_text()), 0)
+            with pytest.raises(ContentSessionError):
+                session.open()
+        finally:
+            release.touch()
+            monkeypatch.setattr(shutil, 'rmtree', original_remove)
+            monkeypatch.setattr(Path, 'unlink', original_unlink)
+            monkeypatch.setattr(os, 'replace', original_replace)
+            session.clear()
+    session.shutdown()
+
+
+def test_disconnect_stops_late_shorts_fallback_request(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from io import BytesIO
+    from threading import Event
+
+    from youtube_strataread.workbench.shorts import YouTubeShortsClassifier
+
+    browser = Browser()
+    browser.handoff = True
+    session = ContentSession(tmp_path / 'session', browser=browser)
+    session.open()
+    session.confirm('abcdefghijk', same_account=True,
+        fetch=lambda *args: SubtitleResult('abcdefghijk', 'T', 'en', False, SRT))
+    entered, release = Event(), Event()
+    requests = []
+    def page(request, cookies):
+        requests.append(request.full_url)
+        if len(requests) == 1:
+            entered.set()
+            assert release.wait(3)
+        response=BytesIO(b'<html>Unclassified</html>')
+        response.status=200
+        response.geturl=lambda: request.full_url
+        return response
+    monkeypatch.setattr('youtube_strataread.workbench.shorts.open_page', page)
+    classifier=YouTubeShortsClassifier()
+    classifier.content_session=session
+    with ThreadPoolExecutor() as pool:
+        pending=pool.submit(classifier.classify,'abcdefghijk')
+        assert entered.wait(2)
+        try:
+            session.clear()
+        finally:
+            release.set()
+        with pytest.raises(ContentSessionError):
+            pending.result()
+    assert len(requests)==1
+    session.shutdown()
+
+
+def test_disconnect_cancels_resource_deferred_browser_until_new_explicit_open(tmp_path):
+    from youtube_strataread.workbench.resource_governor import ResourceGovernor, ResourceObservation
+
+    sample = [ResourceObservation(1024**3, 0, 0, True)]
+    browser = Browser()
+    session = ContentSession(tmp_path / 'session', browser=browser,
+        resources=ResourceGovernor(observe=lambda: sample[0]))
+    with pytest.raises(ContentSessionError):
+        session.open()
+    assert session.status()['browser_pending']
+    session.clear()
+    sample[0] = ResourceObservation(2*1024**3, 0, 0, True)
+    session.tick()
+    assert not browser.running
+    assert not session.status()['browser_pending']
+    assert session.status()['state'] == 'disconnected'
+    # A new explicit request can itself wait for resources and resume normally.
+    sample[0] = ResourceObservation(1024**3, 0, 0, True)
+    with pytest.raises(ContentSessionError):
+        session.open()
+    assert session.status()['state'] == 'waiting_resources'
+    sample[0] = ResourceObservation(2*1024**3, 0, 0, True)
+    session.tick()
+    assert browser.running
+    session.shutdown()

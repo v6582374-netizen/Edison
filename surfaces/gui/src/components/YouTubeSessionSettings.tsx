@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { YouTubeCapabilityError, youtubeCapability } from "../api";
 
 export type ContentSessionStatus = {
-  state: "unverified" | "available" | "needs_user" | "needs_maintenance" | "interrupted" | "waiting_resources";
+  state: "disconnected" | "unverified" | "available" | "needs_user" | "needs_maintenance" | "interrupted" | "waiting_resources";
   browser_pending?: boolean;
   browser_running: boolean; snapshot_present: boolean; reason?: string;
   account_consistency?: string; last_success_at?: number; idle_closes_at?: number;
@@ -116,7 +116,7 @@ export function YouTubeSessionSettings() {
     <h3 className="text-[15px] font-medium">YouTube 内容会话</h3>
     <p className="text-[13px] text-muted">内容登录用于获取字幕；Google 官方授权用于读取订阅，两项需要分别完成。关闭此页面不会断开后台连接。</p>
     <p className="text-[13px]">打开登录画面只会启动服务器浏览器，不会替你登录。</p>
-    <p role="status">{networkError ? "暂时无法确认字幕能力" : ({waiting_resources: "等待服务器资源", available: "字幕能力已验证", unverified: "字幕能力尚未验证", needs_user: "需要完成 YouTube 登录", needs_maintenance: "内容连接需要维护", interrupted: "字幕能力中断"})[status?.state || "unverified"]}</p>
+    <p role="status">{networkError ? "暂时无法确认字幕能力" : ({disconnected: "内容会话已断开", waiting_resources: "等待服务器资源", available: "字幕能力已验证", unverified: "字幕能力尚未验证", needs_user: "需要完成 YouTube 登录", needs_maintenance: "内容连接需要维护", interrupted: "字幕能力中断"})[status?.state || "unverified"]}</p>
     {(networkError || viewError || error || status?.reason) && <p role="alert" className="text-[13px] text-red-600">{networkError || viewError || error || status?.reason}</p>}
     <p className="text-[12px] text-muted">{status?.account_consistency === "user_confirmed_not_verified" ? "账号一致性：用户确认，系统未自动核验。" : "账号一致性尚未确认。"}</p>
     <div className="flex flex-wrap gap-2">

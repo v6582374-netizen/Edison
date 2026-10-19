@@ -81,10 +81,20 @@ def response(payload):
 def google(request, timeout=30):
     url = request.full_url
     parsed = urlsplit(url)
+    if parsed.path == '/revoke':
+        if (root / 'revoke-fails').exists():
+            raise OSError('controlled revocation failure')
+        result = response({}); result.status = 200
+        return result
     if parsed.hostname == 'oauth2.googleapis.com':
         return response({'access_token':'fixture-access','expires_in':86400})
     endpoint = parsed.path.rsplit('/',1)[-1]
     if endpoint == 'subscriptions':
+        if (root / 'hold-subscriptions').exists():
+            (root / 'subscriptions-held').touch()
+            deadline = time.monotonic() + 10
+            while (root / 'hold-subscriptions').exists() and time.monotonic() < deadline:
+                time.sleep(.02)
         return response({'items':[]})
     if endpoint == 'videos':
         video = parse_qs(parsed.query)['id'][0]
@@ -123,7 +133,7 @@ class Provider(ProviderClient):
     def capabilities(self, model):
         return ModelCapabilities()
 manager=SessionManager(data_dir=root/'host',provider=Provider(),model='fixture-model')
-manager.get_settings=lambda:{'model_ready':True}
+manager.get_settings=lambda:{'model_ready':not (root / 'model-unavailable').exists()}
 app=create_app(manager)
 sock=socket.socket(); sock.bind(('127.0.0.1',int(os.environ.get('EDISON_MEASUREMENT_PORT','0'))))
 native = None

@@ -112,6 +112,7 @@ export function YouTubeView({
       if (epoch === connectionEpoch.current) setConnectionChecking(false);
     }
   };
+  const [contentRevision, setContentRevision] = useState(0);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [selected, setSelected] = useState<Inspection | null>(null);
@@ -320,23 +321,31 @@ export function YouTubeView({
       connectionRequest.current = null;
       setConnectionChecking(false);
       setConnectionError(false);
-      setPanelMessage(
-        capability === "connection.configure"
-          ? yt("正在保存到服务器凭据存储…")
-          : capability === "connection.migrate_credentials" ? yt("正在迁移现有连接，请完成这一次 Vault 授权…") : yt("请在浏览器中完成 Google 授权…"),
-      );
-      const result = await call<Connection>(capability, args);
-      setConnection(result);
-      setClientSecret("");
-      setPanelMessage(
-        capability === "connection.authorize"
-          ? yt("YouTube 已连接，已导入 {{value1}} 个订阅。", { value1: result.subscription_count })
-          : capability === "connection.migrate_credentials"
-            ? yt("连接已迁移到此 Edison 实例的凭据存储。")
-          : capability === "connection.disconnect"
-            ? yt("YouTube 授权已断开，已有文档仍保留。")
-            : yt("客户端已保存，请继续在浏览器中授权 YouTube。"),
-      );
+      if (connection?.managed_content && capability === "connection.disconnect") {
+        setPanelMessage(yt("正在断开 YouTube…"));
+        const result = await call<Connection>(capability, args);
+        setConnection(result);
+        setContentRevision(value => value + 1);
+        setPanelMessage("");
+      } else {
+        setPanelMessage(
+          capability === "connection.configure"
+            ? yt("正在保存到服务器凭据存储…")
+            : capability === "connection.migrate_credentials" ? yt("正在迁移现有连接，请完成这一次 Vault 授权…") : yt("请在浏览器中完成 Google 授权…"),
+        );
+        const result = await call<Connection>(capability, args);
+        setConnection(result);
+        setClientSecret("");
+        setPanelMessage(
+          capability === "connection.authorize"
+            ? yt("YouTube 已连接，已导入 {{value1}} 个订阅。", { value1: result.subscription_count })
+            : capability === "connection.migrate_credentials"
+              ? yt("连接已迁移到此 Edison 实例的凭据存储。")
+            : capability === "connection.disconnect"
+              ? yt("YouTube 授权已断开，已有文档仍保留。")
+              : yt("客户端已保存，请继续在浏览器中授权 YouTube。"),
+        );
+      }
       await preferences();
     });
   const selectLayout = (value: Layout) => {
@@ -880,7 +889,21 @@ export function YouTubeView({
         </>)}
         {panel === "connection" && (<>
           {connection && <OfficialAuthorization connection={connection} onChange={value => { setConnection(value); void preferences(); }} />}
-          <YouTubeSessionSettings />
+          <YouTubeSessionSettings key={contentRevision} />
+          {connection?.managed_content ? (
+            <section aria-label={yt("断开 YouTube")}>
+              <p>{yt("断开会同时停止本实例使用 Google 官方授权和 YouTube 内容会话；已有资料、阅读记录与 Auto Update 选择保留。")}</p>
+              <button className="yp-btn" disabled={busy} onClick={() => void connectAction("connection.disconnect")}>
+                {yt("断开 YouTube")}
+              </button>
+              {connection.disconnection?.local === "cleared" && <p role="status">{yt("本实例已清除 Google 官方授权与 YouTube 内容会话。")}</p>}
+              {connection.disconnection?.local === "failed" && <p role="alert">{yt("本实例已停止使用 YouTube，但凭据清理未完成。请检查服务器存储并再次断开。")}</p>}
+              {connection.disconnection?.google === "revoked" && <p>{yt("Google 平台授权已撤销。")}</p>}
+              {connection.disconnection?.google === "failed" && <p role="alert">{yt("Google 平台撤销失败；本实例已停止使用，已有资料仍可阅读。")}</p>}
+              {["not_available", "unknown"].includes(connection.disconnection?.google || "") && <p>{yt("没有可用于撤销的 Google 授权，平台撤销结果尚未确认。")}</p>}
+            </section>
+          ) : (
+            <>
           {panelLoading ? (
             <p>{yt("正在检查连接状态…")}</p>
           ) : connectionError || !connection ? (
@@ -947,6 +970,8 @@ export function YouTubeView({
                 onClick={() => void connectAction("connection.disconnect")}
               >
                 {yt("断开授权")}</button>
+            </>
+          )}
             </>
           )}
           <p className="yp-inline-status">

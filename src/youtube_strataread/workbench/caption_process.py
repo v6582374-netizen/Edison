@@ -27,8 +27,13 @@ class CaptionProcess:
     def __init__(self, command=None):
         self.command = command or [sys.executable, "-m", __name__]
 
-    def acquire(self, url, cookies, *, requests=None, on_metadata=None, before_subtitles=None):
+    def acquire(self, url, cookies, *, requests=None, on_metadata=None, before_subtitles=None, can_use=None):
+        def check_permission():
+            if can_use is not None and not can_use():
+                raise ContentSessionError("invalidated", "内容会话已断开；字幕请求已停止。")
+
         with requests.acquisition() if requests else nullcontext():
+            check_permission()
             process = subprocess.Popen(
                 self.command,
                 stdin=subprocess.PIPE,
@@ -42,9 +47,13 @@ class CaptionProcess:
                 process.stdin.flush()
                 deadline = time.monotonic() + 180
                 while True:
+                    check_permission()
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    if remaining <= 0:
                         raise ContentSessionError("network", "字幕服务请求超时，稍后检查。")
+                    if not select.select([process.stdout], [], [], min(remaining, .1))[0]:
+                        continue
+                    check_permission()
                     try:
                         payload = json.loads(process.stdout.readline())
                     except (ValueError, OSError):
@@ -98,6 +107,7 @@ class CaptionProcess:
                         before_subtitles(payload["info"])
                     elif event not in {"request", "video", "metadata", "subtitles"}:
                         raise ContentSessionError("maintenance", "字幕工作进程协议无效。")
+                    check_permission()
                     process.stdin.write("{}\n")
                     process.stdin.flush()
             finally:

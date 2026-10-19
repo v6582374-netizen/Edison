@@ -67,6 +67,7 @@ class ContentSession:
         self._last_input = 0.0
         self._browser = browser
         self._state = {}
+        self._leases: dict[Path, int] = {}
         self.resources = resources
         self._open_pending = False
 
@@ -87,6 +88,12 @@ class ContentSession:
             self._atomic(owner, str(os.getuid()))
             state = self.root / "state.json"
             self._state = json.loads(state.read_text()) if state.exists() else {"generation": 0}
+            if self._state.get("disconnected"):
+                if (self.root / "profile").exists():
+                    shutil.rmtree(self.root / "profile")
+                (self.root / "current.cookies").unlink(missing_ok=True)
+                self._state["cleanup_pending"] = False
+                self._save()
             # Orphaned disposable copies never become a durable session source.
             shutil.rmtree(self.root / "consumers", ignore_errors=True)
             (self.root / "consumers").mkdir(mode=0o700)
@@ -127,7 +134,7 @@ class ContentSession:
                 self._running = False
                 if released and self.resources:
                     self.resources.browser_released()
-                    self._open_pending = True
+                    self._open_pending = not self._state.get("disconnected", False)
                 self.record_failure(ContentSessionError(
                     "resource" if released else "maintenance",
                     "维护浏览器已因资源压力关闭，稍后再检查资源。" if released
@@ -135,7 +142,9 @@ class ContentSession:
             error = self._state.get("failure_kind")
             return {
                 "state": (
-                    "waiting_resources"
+                    "disconnected"
+                    if self._state.get("disconnected")
+                    else "waiting_resources"
                     if error == "resource"
                     else "needs_user"
                     if error == "user"
@@ -163,9 +172,12 @@ class ContentSession:
     @contextmanager
     def _control(self):
         """Publish browser/control failures before releasing ownership coordination."""
+        observed = self._state.get("generation") if self._owner else None
         with self._lock:
             try:
                 self._claim()
+                if observed is not None and observed != self._state.get("generation"):
+                    raise ContentSessionError("invalidated", "内容会话已更新或断开；旧请求结果已丢弃。")
                 yield
             except (ContentSessionError, OSError) as error:
                 safe = content_failure(error)
@@ -176,6 +188,11 @@ class ContentSession:
 
     def open(self):
         with self._control():
+            if self._state.get("cleanup_pending"):
+                raise ContentSessionError("maintenance", "内容会话清理尚未完成，请再次断开后再重新连接。")
+            if self._state.get("disconnected"):
+                self._state["disconnected"] = False
+                self._save()
             self._last_input = self.now()
             self._open_pending = True
             if not self._running:
@@ -204,6 +221,8 @@ class ContentSession:
 
     def browser_command(self, command, arguments=None):
         with self._control():
+            if self._state.get("disconnected"):
+                raise ContentSessionError("invalidated", "内容会话已断开，请完成清理后重新连接。")
             if not self._running:
                 raise ContentSessionError("user", "服务器浏览器已关闭，请重新打开。")
             try:
@@ -222,6 +241,9 @@ class ContentSession:
 
     def tick(self):
         with self._lock:
+            if self._state.get("disconnected"):
+                self._open_pending = False
+                return
             if (self._running or self._open_pending) and self.now() >= self._last_input + 900:
                 self.close_browser()
                 return
@@ -263,9 +285,12 @@ class ContentSession:
             )
         if not isinstance(video_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
             raise ContentSessionError("unknown", "请输入有效的 11 位字幕检查视频 ID。")
+        observed = self._state.get("generation") if self._owner else None
         with self._lock:
             self._claim()
-            if not self._running:
+            if observed is not None and observed != self._state.get("generation"):
+                raise ContentSessionError("invalidated", "内容会话已更新或断开；旧请求结果已丢弃。")
+            if self._state.get("disconnected") or not self._running:
                 raise ContentSessionError("user", "请先打开服务器浏览器并完成 YouTube 登录。")
             self._last_input = self.now()
             try:
@@ -311,7 +336,7 @@ class ContentSession:
         try:
             if self.resources:
                 self.resources.require_captions()
-            with self.snapshot() as lease:
+            with self.snapshot(expected_generation=lease.generation) as lease:
                 result = fetch(f"https://www.youtube.com/watch?v={video_id}", lease.path)
                 self.accept(lease, result, video_id)
                 return result
@@ -320,22 +345,35 @@ class ContentSession:
             raise
 
     @contextmanager
-    def snapshot(self):
+    def snapshot(self, *, expected_generation=None):
+        observed = expected_generation if expected_generation is not None else self._state.get("generation") if self._owner else None
         if self.resources:
             self.resources.require_captions()
         with self._lock:
             self._claim()
+            if observed is not None and observed != self._state.get("generation"):
+                raise ContentSessionError("invalidated", "内容会话已更新或断开；旧请求结果已丢弃。")
             current = self.root / "current.cookies"
-            if not current.exists():
+            if self._state.get("disconnected") or not current.exists():
                 raise ContentSessionError("user", "尚未完成服务器 YouTube 内容登录。")
             directory = Path(tempfile.mkdtemp(dir=self.root / "consumers"))
             path = directory / "cookies.txt"
             self._atomic(path, current.read_text())
             lease = Snapshot(path, self._state["generation"])
+            self._leases[path] = lease.generation
         try:
             yield lease
         finally:
+            with self._lock:
+                self._leases.pop(path, None)
             shutil.rmtree(directory, ignore_errors=True)
+
+    def snapshot_active(self, path):
+        """Permission is independent of successful credential-file deletion."""
+        with self._lock:
+            return (not self._retired and not self._state.get("disconnected")
+                    and path in self._leases
+                    and self._leases[path] == self._state.get("generation"))
 
     def accept(self, lease, result, video_id):
         with self._lock:
@@ -364,7 +402,7 @@ class ContentSession:
         with self._lock:
             if lease is not None:
                 self.assert_current(lease)
-            if self._retired or error.kind == "invalidated":
+            if self._retired or self._state.get("disconnected") or error.kind == "invalidated":
                 return
             if error.kind != "resource":
                 self._verified = False
@@ -381,19 +419,29 @@ class ContentSession:
                     )
 
     def clear(self):
-        """Disconnect boundary: stop writer first, invalidate leases, remove secrets."""
+        """Withdraw leases durably, stop the writer, then remove its profile."""
         with self._lock:
             self._claim()
-            self.close_browser()
-            self._state = {"generation": self._state.get("generation", 0) + 1}
+            self._state = {"generation": self._state.get("generation", 0) + 1, "disconnected": True, "cleanup_pending": True}
             self._verified = False
-            self._save()
+            try:
+                self._save()
+                if (self.root / "consumers").exists():
+                    shutil.rmtree(self.root / "consumers", ignore_errors=False)
+                (self.root / "current.cookies").unlink(missing_ok=True)
+                (self.root / "consumers").mkdir(mode=0o700)
+            finally:
+                # Failure to erase secrets must never keep their writer alive.
+                # Readers use the in-memory generation fence, not file absence.
+                self.close_browser()
             for name in ("profile", "consumers"):
                 shutil.rmtree(self.root / name, ignore_errors=False) if (
                     self.root / name
                 ).exists() else None
             (self.root / "current.cookies").unlink(missing_ok=True)
             (self.root / "consumers").mkdir(mode=0o700)
+            self._state["cleanup_pending"] = False
+            self._save()
             return self.status()
 
     def shutdown(self):
