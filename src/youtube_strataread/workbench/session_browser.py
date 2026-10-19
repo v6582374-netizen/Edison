@@ -205,7 +205,11 @@ def profile_snapshot(profile):
 def _serve(profile, start_url, runtime):
     import shutil
 
-    from youtube_strataread.workbench.session_desktop import Desktop, wait_for_native_window
+    from youtube_strataread.workbench.session_desktop import (
+        Desktop,
+        close_native_windows,
+        wait_for_native_window,
+    )
 
     def reply(result=None, kind=None):
         print(json.dumps({"ok": kind is None, "result": result, "kind": kind}), flush=True)
@@ -238,10 +242,10 @@ def _serve(profile, start_url, runtime):
             if desktop is None or quit_requested:
                 raise RuntimeError("desktop did not complete orderly close")
             quit_requested = True
-            # Chrome's own quit command flushes the profile. SIGTERM is only
-            # emergency cleanup: process termination alone did not save cookies
-            # in the real native Linux fixture.
-            desktop.navigate("chrome://quit")
+            # Use the normal native window-manager close protocol. Keyboard
+            # shortcuts/omnibox navigation can race focus and input dispatch.
+            # Termination is emergency cleanup, never proof of profile flushing.
+            close_native_windows(os.environ["DISPLAY"], alive=lambda: browser.poll() is None)
             browser.wait(timeout=15)
         if browser.returncode != 0:
             raise RuntimeError("browser exited unexpectedly")

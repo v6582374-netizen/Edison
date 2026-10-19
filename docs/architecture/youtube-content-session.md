@@ -56,8 +56,10 @@ assets, change Auto Update, or restore cancelled work. Unified Google + content
 disconnection is a separate caller of this boundary. `shutdown()` preserves the
 profile/snapshot for service restart and invalidates that host's in-flight results.
 
-Browser close invokes Chrome's own `chrome://quit` through its normal address
-bar and waits for clean exit before reading the profile. SIGTERM did not persist
+Browser close sends the normal X11 `WM_DELETE_WINDOW` protocol to the browser's
+mapped native windows and waits for clean process exit before reading the profile.
+It does not accept before-unload dialogs. Keyboard/omnibox quit proved unreliable
+in the native fixture, so closing does not depend on focus or typing timing. SIGTERM did not persist
 the synthetic cookie in the native Linux test, so termination is emergency
 cleanup only and can never authorize snapshot extraction. Failed orderly close
 preserves the old snapshot. Cleanup terminates and, if needed, kills the whole

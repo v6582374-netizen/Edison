@@ -186,7 +186,7 @@ class Desktop:
         self.key("Enter")
 
 
-def wait_for_native_window(display_name, *, alive, timeout=10):
+def _native_window_action(display_name, *, alive, close=False, timeout=10):
     """Wait for a mapped native window, not a webpage or authentication state.
 
     Xvfb/RFB can be ready before Chrome has any window to receive keyboard input.
@@ -222,6 +222,28 @@ def wait_for_native_window(display_name, *, alive, timeout=10):
             ("screen", ctypes.c_void_p),
         ]
 
+    class MessageData(ctypes.Union):
+        _fields_ = [
+            ("bytes", ctypes.c_char * 20),
+            ("shorts", ctypes.c_short * 10),
+            ("longs", ctypes.c_long * 5),
+        ]
+
+    class ClientMessage(ctypes.Structure):
+        _fields_ = [
+            ("type", ctypes.c_int),
+            ("serial", ctypes.c_ulong),
+            ("send_event", ctypes.c_int),
+            ("display", ctypes.c_void_p),
+            ("window", ctypes.c_ulong),
+            ("message_type", ctypes.c_ulong),
+            ("format", ctypes.c_int),
+            ("data", MessageData),
+        ]
+
+    class Event(ctypes.Union):
+        _fields_ = [("message", ClientMessage), ("padding", ctypes.c_long * 24)]
+
     x11 = ctypes.CDLL("libX11.so.6")
     x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
     x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -249,6 +271,21 @@ def wait_for_native_window(display_name, *, alive, timeout=10):
         ctypes.POINTER(ctypes.c_int),
     ]
     x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x11.XInternAtom.restype = ctypes.c_ulong
+    x11.XGetWMProtocols.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    x11.XSendEvent.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_long,
+        ctypes.POINTER(Event),
+    ]
     # A window may disappear between the tree query and attributes query.
     handler_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
     handler = handler_type(lambda *_: 0)
@@ -261,11 +298,14 @@ def wait_for_native_window(display_name, *, alive, timeout=10):
         raise DesktopError("native display unavailable")
     try:
         root = x11.XDefaultRootWindow(display)
+        protocols_atom = x11.XInternAtom(display, b"WM_PROTOCOLS", 0)
+        delete_atom = x11.XInternAtom(display, b"WM_DELETE_WINDOW", 0)
         deadline = time.monotonic() + timeout
         while alive() and time.monotonic() < deadline:
             root_out, parent = ctypes.c_ulong(), ctypes.c_ulong()
             children = ctypes.POINTER(ctypes.c_ulong)()
             count = ctypes.c_uint()
+            sent = 0
             if x11.XQueryTree(
                 display,
                 root,
@@ -285,6 +325,37 @@ def wait_for_native_window(display_name, *, alive, timeout=10):
                             and attributes.width >= 200
                             and attributes.height >= 200
                         ):
+                            if close:
+                                protocols = ctypes.POINTER(ctypes.c_ulong)()
+                                size = ctypes.c_int()
+                                try:
+                                    supported = x11.XGetWMProtocols(
+                                        display,
+                                        children[index],
+                                        ctypes.byref(protocols),
+                                        ctypes.byref(size),
+                                    )
+                                    if not supported or delete_atom not in [
+                                        protocols[i] for i in range(size.value)
+                                    ]:
+                                        continue
+                                    event = Event()
+                                    event.message.type = 33  # ClientMessage
+                                    event.message.send_event = 1
+                                    event.message.display = display
+                                    event.message.window = children[index]
+                                    event.message.message_type = protocols_atom
+                                    event.message.format = 32
+                                    event.message.data.longs[0] = delete_atom
+                                    event.message.data.longs[1] = 0  # CurrentTime
+                                    if x11.XSendEvent(
+                                        display, children[index], 0, 0, ctypes.byref(event)
+                                    ):
+                                        sent += 1
+                                finally:
+                                    if protocols:
+                                        x11.XFree(protocols)
+                                continue
                             # This private display has only the owned browser.
                             # Focus its mapped window before accepting human keys.
                             x11.XSetInputFocus(display, children[index], 2, 0)
@@ -296,8 +367,22 @@ def wait_for_native_window(display_name, *, alive, timeout=10):
                 finally:
                     if children:
                         x11.XFree(children)
+            if close and sent:
+                x11.XSync(display, 0)
+                return
             time.sleep(0.05)
+        if close and not alive():
+            return
         raise DesktopError("native browser window did not become ready")
     finally:
         x11.XCloseDisplay(display)
         x11.XSetErrorHandler(previous_handler)
+
+
+def wait_for_native_window(display_name, *, alive, timeout=10):
+    _native_window_action(display_name, alive=alive, timeout=timeout)
+
+
+def close_native_windows(display_name, *, alive):
+    """Normal window-manager close; never accept dialogs or force profile saves."""
+    _native_window_action(display_name, alive=alive, close=True)

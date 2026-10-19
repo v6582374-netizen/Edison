@@ -15,6 +15,7 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
     import sys
     import threading
     import time
+    from urllib.parse import parse_qs, urlsplit
 
     from yt_dlp.cookies import extract_cookies_from_browser
 
@@ -32,13 +33,14 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
         finally:
             phases[name] = round(time.monotonic() - started, 3)
 
+    typed_value = "hello:/中 !@#%+"
     seen = threading.Event()
     typed = threading.Event()
     cookie_received = threading.Event()
 
     class Page(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path.startswith("/typed?value=hello"):
+            if parse_qs(urlsplit(self.path).query).get("value") == [typed_value]:
                 typed.set()
                 if "test=value" in self.headers.get("Cookie", ""):
                     cookie_received.set()
@@ -46,7 +48,9 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
             self.send_header("Content-Type", "text/html")
             self.send_header("Set-Cookie", "test=value; Max-Age=3600; Path=/")
             self.end_headers()
-            self.wfile.write(b"<input autofocus oninput=\"fetch('/typed?value='+this.value)\">")
+            self.wfile.write(
+                b"<input autofocus oninput=\"fetch('/typed?value='+encodeURIComponent(this.value))\">"
+            )
             seen.set()
 
         def log_message(self, *_):
@@ -66,7 +70,7 @@ def test_real_native_browser_input_profile_flush_and_reopen(tmp_path, monkeypatc
         assert screen["image"].startswith("iVBOR")
         assert screen["width"] == 1100
         assert "origin" not in screen  # visible address bar, never guessed DOM origin
-        browser.command("text", {"text": "hello"})
+        browser.command("text", {"text": typed_value})
         assert typed.wait(5)
         assert cookie_received.wait(5)
         # Local fixture cookies must not become a YouTube snapshot.
