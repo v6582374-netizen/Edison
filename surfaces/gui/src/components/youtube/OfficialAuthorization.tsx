@@ -21,6 +21,7 @@ export function OfficialAuthorization({ connection, onChange }: {
   }
   return <section aria-label={yt("Google 官方授权")}>
     <h3>{yt("Google 官方授权")}</h3>
+    {!connection.configured && <p className="yp-inline-status">{yt("Google 官方授权尚未配置，订阅导入暂不可用。此配置与下方的 YouTube 内容登录是两条连接。")}</p>}
     <p role="status">{capability?.state === "available" ? yt("订阅能力已验证") : capability?.state === "interrupted" ? yt("订阅能力中断") : yt("订阅能力尚未验证")}</p>
     <p>{yt("最近成功")}: {when(capability?.last_success_at)}</p>
     {capability?.last_failure_at && <p>{yt("最近失败")}: {when(capability.last_failure_at)} · {capability.last_failure_reason || capability.reason}</p>}

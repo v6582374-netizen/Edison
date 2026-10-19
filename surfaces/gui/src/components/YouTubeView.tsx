@@ -322,7 +322,7 @@ export function YouTubeView({
       setConnectionError(false);
       setPanelMessage(
         capability === "connection.configure"
-          ? yt("正在保存到系统钥匙串…")
+          ? yt("正在保存到服务器凭据存储…")
           : capability === "connection.migrate_credentials" ? yt("正在迁移现有连接，请完成这一次 Vault 授权…") : yt("请在浏览器中完成 Google 授权…"),
       );
       const result = await call<Connection>(capability, args);
@@ -332,7 +332,7 @@ export function YouTubeView({
         capability === "connection.authorize"
           ? yt("YouTube 已连接，已导入 {{value1}} 个订阅。", { value1: result.subscription_count })
           : capability === "connection.migrate_credentials"
-            ? yt("连接已迁移到系统钥匙串，今后不再需要 Vault。")
+            ? yt("连接已迁移到此 Edison 实例的凭据存储。")
           : capability === "connection.disconnect"
             ? yt("YouTube 授权已断开，已有文档仍保留。")
             : yt("客户端已保存，请继续在浏览器中授权 YouTube。"),
@@ -743,7 +743,7 @@ export function YouTubeView({
       <Dialog
         open={panel === "channels" || panel === "connection"} interaction={modal} fallbackFocusRef={mainRef}
         title={panel === "channels" ? yt("订阅频道") : panel === "connection" ? yt("连接 YouTube") : yt("文档信息")}
-        subtitle={panel === "channels" ? yt("默认自动生成所有订阅频道的阅读文档。") : panel === "connection" ? yt("通过 Google 安全连接，登录凭据由系统钥匙串保存。") : selected?.channel_title}
+        subtitle={panel === "channels" ? yt("默认自动生成所有订阅频道的阅读文档。") : panel === "connection" ? yt("分别完成官方订阅授权与服务器内容登录；连接保存在此 Edison 实例。") : selected?.channel_title}
         onClose={close}
         footer={panel === "channels" ? (
             <>
@@ -889,7 +889,7 @@ export function YouTubeView({
             </div>
           ) : !connection.configured ? (
             <>
-            <p>{yt("此构建尚未配置 Google 登录。可迁移本机已有连接，或展开开发者设置。")}</p>
+            <p>{yt("以下设置仅用于 Google 官方授权（订阅读取），不控制上方的 YouTube 内容登录。")}</p>
             <button className="yp-btn primary" disabled={busy} onClick={() => void connectAction("connection.migrate_credentials")}>{yt("迁移现有连接")}</button>
             <details style={{ marginTop: 16 }}><summary>{yt("开发者设置")}</summary>
             <form
@@ -925,7 +925,7 @@ export function YouTubeView({
                 style={{ marginTop: 16 }}
                 disabled={busy}
               >
-                {busy ? yt("正在保存…") : yt("保存到系统钥匙串")}
+                {busy ? yt("正在保存…") : yt("保存官方授权配置")}
               </button>
             </form>
             </details>
