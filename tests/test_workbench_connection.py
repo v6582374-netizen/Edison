@@ -64,17 +64,17 @@ def test_connection_configuration_and_authorization_imports_subscription_sources
     connected = service.authorize_and_import()
     disconnected = service.disconnect()
 
-    assert configured.as_result() == {
+    assert {key: value for key, value in configured.as_result().items() if key != "subscription_capability"} == {
         "configured": True,
         "authorized": False,
         "subscription_count": 0,
     }
-    assert connected.as_result() == {
+    assert {key: value for key, value in connected.as_result().items() if key != "subscription_capability"} == {
         "configured": True,
         "authorized": True,
         "subscription_count": 2,
     }
-    assert disconnected.as_result() == {
+    assert {key: value for key, value in disconnected.as_result().items() if key != "subscription_capability"} == {
         "configured": True,
         "authorized": False,
         "subscription_count": 2,
@@ -101,7 +101,7 @@ def test_expired_credentials_refresh_before_subscription_import(tmp_path: Path) 
 
     status = service.refresh_subscription_sources()
 
-    assert status.as_result() == {
+    assert {key: value for key, value in status.as_result().items() if key != "subscription_capability"} == {
         "configured": True,
         "authorized": True,
         "subscription_count": 1,
@@ -155,7 +155,7 @@ def test_vault_unavailability_becomes_a_safe_connection_error(tmp_path: Path) ->
     )
 
     assert service.status().authorized is False  # Navigation never opens the credential store.
-    with pytest.raises(ConnectionError, match="vault unavailable"):
+    with pytest.raises(ConnectionError, match="credential storage is unavailable"):
         service.refresh_subscription_sources()
 
 

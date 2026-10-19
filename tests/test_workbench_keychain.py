@@ -79,3 +79,19 @@ def test_service_account_file_is_opt_in_owner_only_and_survives_restart(tmp_path
     assert "access" not in path.read_text()
     assert NativeKeychainVault(namespace="/srv").load(refresh) == "refresh"
     assert NativeKeychainVault(namespace="/other").keys() == set()
+
+
+def test_service_account_file_rejects_foreign_readable_or_symlinked_credentials(tmp_path):
+    from youtube_strataread.workbench.keychain import ServiceAccountFile
+    path = tmp_path / 'credentials.json'
+    store = ServiceAccountFile(path)
+    store.set_password('service', 'account', 'original')
+    path.chmod(0o644)
+    with pytest.raises(PermissionError):
+        store.get_password('service', 'account')
+    path.chmod(0o600)
+    alias = tmp_path / 'alias.json'
+    alias.symlink_to(path)
+    with pytest.raises(PermissionError):
+        ServiceAccountFile(alias).set_password('service', 'account', 'replacement')
+    assert store.get_password('service', 'account') == 'original'

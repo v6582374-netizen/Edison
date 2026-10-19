@@ -118,10 +118,11 @@ class YouTubeWorkbench:
         # Edison owns its library; never discover or migrate the standalone tool's data.
         root = Path(os.environ["YOUTUBE_WORKBENCH_WORKSPACE"]).expanduser() if os.environ.get("YOUTUBE_WORKBENCH_WORKSPACE") else state_dir() / "youtube"
         self.workspace = LocalWorkspace.open(root)
-        self.workspace.recover_interrupted_preparations()
         self.connection = ConnectionService(
             workspace=self.workspace, vault=NativeKeychainVault(namespace=str(root.resolve())), oauth=GoogleOAuthGateway()
         )
+        self.connection.claim_server_ownership()
+        self.workspace.recover_interrupted_preparations()
         self.discovery = SubscriptionDiscovery(
             workspace=self.workspace, source=YouTubeUploadsAPI(workspace=self.workspace, connection=self.connection)
         )
@@ -189,6 +190,8 @@ class YouTubeWorkbench:
         self.heartbeat_thread.join(timeout=1)
         self.subscription_thread.join(timeout=1)
         self.discovery_thread.join(timeout=1)
+        if not any(thread.is_alive() for thread in (self.thread, self.heartbeat_thread, self.subscription_thread, self.discovery_thread)):
+            self.connection.release_server_ownership()
 
     def ensure_summary(self, video_id: str) -> str:
         with self.summary_locks_guard:
@@ -246,6 +249,14 @@ class YouTubeWorkbench:
                 return {"ok": False, "error": str(error)}
             except Exception:
                 return {"ok": False, "error": "摘要生成失败，请稍后重新打开文档。"}
+        if capability == "connection.import_authorization":
+            try:
+                result = self.connection.import_authorization(
+                    client_id=arguments.get("client_id", ""), client_secret=arguments.get("client_secret", ""),
+                    refresh_token=arguments.get("refresh_token", ""))
+                return {"ok": True, "result": result.as_result()}
+            except ConnectionError as error:
+                return {"ok": False, "error": str(error)}
         if capability == "connection.refresh_subscriptions":
             try:
                 result = self.connection.refresh_subscription_sources().as_result()
@@ -442,4 +453,8 @@ def attach_youtube(app: FastAPI, manager: Any) -> None:
 
     @app.post("/v1/youtube/capability")
     def capability(request: CapabilityRequest) -> dict[str, Any]:
-        return start_youtube(app, manager).dispatch(request.capability, request.arguments)
+        try:
+            workbench = start_youtube(app, manager)
+        except ConnectionError as error:
+            return {"ok": False, "error": str(error)}
+        return workbench.dispatch(request.capability, request.arguments)
