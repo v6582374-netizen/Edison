@@ -54,6 +54,7 @@ def test_kernel_contract_rejects_unbounded_display_group_and_host_group(tmp_path
     cgroups = tmp_path / 'cgroup'
     group = cgroups / 'edison/browser'; group.mkdir(parents=True)
     for name, value in {'memory.max':'1342177280', 'memory.high':'1207959552', 'memory.swap.max':'0',
+                        'cpu.max':'50000 100000',
                         'memory.stat':'anon 0\nfile 0\nkernel 0\nshmem 0\n', 'memory.swap.current':'0',
                         'cgroup.procs':'999999'}.items():
         (group / name).write_text(value)
@@ -63,6 +64,17 @@ def test_kernel_contract_rejects_unbounded_display_group_and_host_group(tmp_path
     assert not kernel.observe().constrained
     (group / 'memory.swap.max').write_text('0')
     (proc / 'self/cgroup').write_text('0::/edison/browser\n')
+    assert not kernel.observe().constrained
+
+
+def test_kernel_contract_rejects_a_cpu_cap_above_half_a_core(tmp_path):
+    kernel = kernel_fixture(tmp_path)
+    assert kernel.observe().constrained
+    (kernel.group / 'cpu.max').write_text('max 100000')
+    assert not kernel.observe().constrained
+    (kernel.group / 'cpu.max').write_text('100000 100000')
+    assert not kernel.observe().constrained
+    (kernel.group / 'cpu.max').unlink()
     assert not kernel.observe().constrained
 
 
@@ -109,7 +121,7 @@ def kernel_fixture(tmp_path, *, limit='1342177280', high='1207959552', stat='ano
     (proc/'meminfo').write_text(f'MemAvailable: {available_kb} kB\n')
     (proc/'self/cgroup').write_text('0::/backend\n')
     root=tmp_path/'cgroup'; group=root/'browser'; group.mkdir(parents=True)
-    files = {'memory.max':limit,'memory.high':high,'memory.swap.max':'0','memory.stat':stat,'memory.swap.current':swap}
+    files = {'memory.max':limit,'memory.high':high,'memory.swap.max':'0','cpu.max':'50000 100000','memory.stat':stat,'memory.swap.current':swap}
     for name, value in files.items():
         if value is not None:
             (group/name).write_text(value)

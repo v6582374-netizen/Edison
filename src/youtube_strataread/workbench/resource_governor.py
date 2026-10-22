@@ -18,6 +18,10 @@ RUN_AVAILABLE = 384 * MIB
 # File cache is excluded: the kernel reclaims it at memory.high, whereas
 # anon+shmem+kernel memory can only be freed by closing the browser.
 BROWSER_RELEASE = 1024 * MIB
+# Half a core. A 2-vCPU host let an uncapped YouTube page take about 1.7 cores
+# and pushed reading P95 up by 579 ms. This quota is the measured cap.
+CPU_QUOTA = 50_000
+CPU_PERIOD = 100_000
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ class ResourceGovernor:
         sample = self.observe()
         reason = None
         if not sample.constrained:
-            reason = "服务器浏览器资源隔离不可用，请检查内存与 swap 上限。"
+            reason = "服务器浏览器资源隔离不可用，请检查内存、swap 与 CPU 上限。"
         elif sample.browser_unreclaimable >= BROWSER_RELEASE or sample.browser_swap:
             reason = "服务器浏览器接近内存预算，正在释放维护资源。"
         elif sample.available < RUN_AVAILABLE:
@@ -90,6 +94,9 @@ class LinuxResources:
         high = int((group / "memory.high").read_text())
         swap_limit = int((group / "memory.swap.max").read_text())
         if high != BROWSER_HIGH or limit != BROWSER_LIMIT or swap_limit != 0:
+            raise ValueError("unsafe cgroup budget")
+        quota, period = (group / "cpu.max").read_text().split()
+        if int(quota) != CPU_QUOTA or int(period) != CPU_PERIOD:
             raise ValueError("unsafe cgroup budget")
         return group
 
