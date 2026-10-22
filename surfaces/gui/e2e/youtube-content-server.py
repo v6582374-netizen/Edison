@@ -153,7 +153,9 @@ if measurement:
     from fastapi import Header, HTTPException
     from fastapi.responses import HTMLResponse
     from youtube_strataread.workbench.resource_governor import ResourceGovernor
-    native = NativeBrowser(start_url=f"http://127.0.0.1:{sock.getsockname()[1]}/_measurement/page")
+    # Real-page runs must point at an isolated test profile, never production.
+    native = NativeBrowser(start_url=os.environ.get("EDISON_MEASUREMENT_START_URL") or f"http://127.0.0.1:{sock.getsockname()[1]}/_measurement/page")
+    native_profile = Path(os.environ.get("EDISON_MEASUREMENT_PROFILE") or root / "native-profile")
     @app.get("/_measurement/page", response_class=HTMLResponse)
     def fixture_page():
         return "<!doctype html><title>Isolated Edison resource fixture</title><h1>Native maintenance view</h1><input placeholder='Synthetic input'><p>No Google account or credentials.</p>"
@@ -163,7 +165,7 @@ if measurement:
             raise HTTPException(401)
         operation = payload.get("operation")
         if operation == "open":
-            native.start(root / "native-profile")
+            native.start(native_profile)
         elif operation == "close":
             native.close()
         elif operation == "screen":

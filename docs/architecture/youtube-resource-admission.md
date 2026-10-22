@@ -79,9 +79,12 @@ For real measurements use `youtube-content-server.py ROOT native-measurement`
 with a **new synthetic** content/profile/HOME/library and actual Linux wrappers.
 This opt-in mode leaves kernel observations real and provides authenticated
 `/_measurement/native` operations through the real ServerBrowser public adapter.
-Its actual browser only loads a local, credential-free page. Its separately
+By default its actual browser only loads a local, credential-free page. Its separately
 labelled external content fixture supplies synthetic snapshots/captions for the
 real host queue; this does not test Google login or real YouTube page demand.
+For real page coexistence set `EDISON_MEASUREMENT_START_URL` (for example
+`https://www.youtube.com/`) and `EDISON_MEASUREMENT_PROFILE` to an isolated test
+profile on the measurement host; never point it at a production profile.
 
 Run `youtube-resource-measurement.spec.ts` with
 `EDISON_RESOURCE_MEASUREMENT_URL` set to that private forwarded fixture and
