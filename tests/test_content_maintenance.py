@@ -109,6 +109,7 @@ def test_runs_are_capped_at_three_minutes_and_two_per_rolling_day_across_restart
     lose_session(session, "session-2")
     session.shutdown()
     restarted = ContentSession(tmp_path / "session", browser=browser, now=lambda: clock[0], unattended=True)
+    assert not restarted.acquisition_ready(), "the queue may ask before the first heartbeat"
     restarted.tick()
     assert browser.starts == 3 and not browser.running
     status = restarted.status()

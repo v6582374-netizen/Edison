@@ -251,6 +251,11 @@ class ContentSession:
     def acquisition_ready(self):
         """New captions wait while the current snapshot is known to be refused."""
         with self._lock:
+            if self.unattended and not self._retired:
+                try:
+                    self._claim()
+                except ContentSessionError:
+                    return True  # acquisition itself reports the storage failure
             return not (self._state.get("handoff") or self._state.get("maintenance_due") == "signed_out")
 
     def _end_maintenance(self, error=None):
