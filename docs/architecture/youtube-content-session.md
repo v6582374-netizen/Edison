@@ -87,6 +87,56 @@ now verifies and enrolls the entire display/browser tree in its dedicated Linux
 cgroup. Target-machine coexistence and abnormal host/OS admission remain separate
 evidence requirements.
 
+## Unattended maintenance and human handoff
+
+The same `ContentSession` schedules maintenance; there is no second guardian or
+task engine. The managed host's heartbeat advances it whether or not an Edison
+page is open or its sign-in has expired. Two observations are a maintenance
+basis, and only for a session that has already produced a matching caption:
+
+- a background caption consumer is refused with a YouTube sign-in requirement
+  (the worker's `user` kind) on the current snapshot generation;
+- a consumer's own copy comes back with a replaced identity cookie (`SID`
+  family, `*PSIDTS`, `LOGIN_INFO`; churning `*CC` values are ignored). The copy
+  is still discarded; it only tells the host that Google moved the session on
+  without the profile.
+
+Network failures, 429, confirmed caption absence, storage/program failures and
+unknown results never start the browser. Web-initiated checks report their
+failure to the person instead of scheduling maintenance, and a refusal during
+initial connection keeps the ordinary sign-in path.
+
+A run opens the profile's own browser at youtube.com, leaves it for 45 seconds,
+then closes it in order and publishes the read-only snapshot as a new
+generation. Older leases are invalidated as with any snapshot replacement. Each run is cut off,
+unpublished, three minutes after it was spent. At most two runs start in any
+rolling 24 hours. The attempt is written to `state.json` before the browser
+starts, so a normal or crashed host restart cannot refund it; an interrupted run
+is cleared on the next start and its basis stays due. Disconnection keeps the
+spent attempts, cancels the run and its basis; a run that loses the generation
+race publishes nothing. Runs wait for the shared YouTube cooldown and for browser
+resource admission; both waits report a reason and the next time they can act
+(`maintenance.next_at`). Budget exhaustion reports the time the oldest attempt
+leaves the window. Opening the browser by hand takes over the one profile
+browser instead of launching another, and closing it or a cutover drain ends
+the run.
+
+While the current snapshot is refused, queued caption work stays queued without
+spending its retry budget; retained-transcript work continues. Captions resume
+from the next current snapshot and still pass through cooldown, pacing,
+permission and cancellation checks. A snapshot that a maintenance run produced
+and that is refused before any caption success, or a profile that is signed out
+when maintenance closes it, is an explicit verification requirement: automatic
+runs stop and the session reports `needs_user`. The person opens the browser
+and enters the password or verification code only on the Google page. That
+handoff is not bounded by the three-minute run cap; it closes after 15 minutes
+without input and can be reopened. A successful caption check ends the handoff.
+
+The 45-second dwell is an operating choice. Whether a real profile refreshes its
+cookies in that time, whether YouTube actually rotates them in consumer
+responses, and how often natural rotation or real Google challenges occur are
+**not verified**. Controlled E2E proves the control path only.
+
 ## Isolated setup and connection procedure
 
 This implementation does **not** grant production admission. Browser startup is
@@ -94,7 +144,8 @@ opt-in and off by default. Provision and test a constrained browser process grou
 before enabling it in production; a process group alone does not enforce the
 1280 MiB memory ceiling with zero swap. Do not set the enable flag on the live
 instance until resource admission, recovery drills and the controlled maintenance
-window are approved. Automatic maintenance is not part of this slice.
+window are approved. Unattended maintenance (below) uses the same adapter and the
+same enable flag; it grants no admission either.
 
 For an isolated test deployment using a fixed non-root service identity:
 
@@ -136,7 +187,7 @@ For an isolated test deployment using a fixed non-root service identity:
 The browser adapter exposes `process.pid` as its process-group identity for the
 resource controller, and all starts pass through `ServerBrowser.start`. The
 session exposes `open`, `browser_command`, `confirm`, `verify`, `tick`,
-`close_browser`, `snapshot`, `accept`, `clear`, and `shutdown`; later maintenance
+`acquisition_ready`, `close_browser`, `snapshot`, `accept`, `clear`, and `shutdown`; maintenance
 and disconnect callers must use these boundaries rather than edit credential
 files or launch another writer.
 
@@ -148,7 +199,12 @@ external Google/YouTube/browser/model responses and time are controlled. It
 covers incomplete site login, empty/wrong-video results, successful fresh
 captions, browser close, different worker PIDs, service restart, a Web-submitted
 manual video reaching a manuscript with Auto Update off, failure reason and idle
-close. Focused tests cover single ownership, generation races, secret-copy
+close. `youtube-maintenance.spec.ts` uses the same boundaries for unattended
+maintenance: ordinary failures that start no browser, a closed page, the
+three-minute cut-off, the rolling budget across SIGTERM and SIGKILL restarts,
+response rotation, handoff with an unbounded and reopenable person's browser,
+resource waiting with its next time, one run for several waiting videos, and a
+disconnect racing a snapshot. Focused tests cover single ownership, generation races, secret-copy
 cleanup, typed failure categories, and orphaned process-group cleanup. A real
 native Linux protocol test exercises screenshots, synthetic input, graceful
 close, read-only profile extraction and reopen against a local HTTP page. Local
