@@ -11,17 +11,19 @@ from dataclasses import dataclass
 from youtube_strataread.workbench.content_session import ContentSessionError
 
 MIB = 1024 * 1024
-BROWSER_LIMIT = 768 * MIB
+BROWSER_LIMIT = 1280 * MIB
+BROWSER_HIGH = 1152 * MIB
 START_AVAILABLE = 1280 * MIB
-RUN_AVAILABLE = 512 * MIB
-# Release before the 576 MiB kernel high watermark stalls browser allocation.
-BROWSER_RELEASE = 544 * MIB
+RUN_AVAILABLE = 384 * MIB
+# File cache is excluded: the kernel reclaims it at memory.high, whereas
+# anon+shmem+kernel memory can only be freed by closing the browser.
+BROWSER_RELEASE = 1024 * MIB
 
 
 @dataclass(frozen=True)
 class ResourceObservation:
     available: int
-    browser_memory: int
+    browser_unreclaimable: int
     browser_swap: int
     constrained: bool
 
@@ -38,7 +40,7 @@ class ResourceGovernor:
         reason = None
         if not sample.constrained:
             reason = "服务器浏览器资源隔离不可用，请检查内存与 swap 上限。"
-        elif sample.browser_memory >= BROWSER_RELEASE or sample.browser_swap:
+        elif sample.browser_unreclaimable >= BROWSER_RELEASE or sample.browser_swap:
             reason = "服务器浏览器接近内存预算，正在释放维护资源。"
         elif sample.available < RUN_AVAILABLE:
             reason = "服务器可用内存不足，等待资源恢复；已有阅读和在途成稿继续。"
@@ -49,7 +51,7 @@ class ResourceGovernor:
             "release_browser": bool(reason),
             "reason": reason or ("服务器可用内存不足 1.25 GiB，等待打开登录画面。" if sample.available < START_AVAILABLE else "维护浏览器已因资源压力关闭，稍后再检查资源。" if browser_backoff else None),
             "available_bytes": sample.available,
-            "browser_memory_bytes": sample.browser_memory,
+            "browser_unreclaimable_bytes": sample.browser_unreclaimable,
             "browser_swap_bytes": sample.browser_swap,
         }
 
@@ -87,7 +89,7 @@ class LinuxResources:
         limit = int((group / "memory.max").read_text())
         high = int((group / "memory.high").read_text())
         swap_limit = int((group / "memory.swap.max").read_text())
-        if high != 576 * MIB or limit != BROWSER_LIMIT or swap_limit != 0:
+        if high != BROWSER_HIGH or limit != BROWSER_LIMIT or swap_limit != 0:
             raise ValueError("unsafe cgroup budget")
         return group
 
@@ -101,7 +103,8 @@ class LinuxResources:
             own_group = self.cgroup_root / own.lstrip("/")
             if not browser_process and (own_group == group or own_group.is_relative_to(group)):
                 raise ValueError("host must stay outside browser group")
-            memory = int((group / "memory.current").read_text())
+            stat = dict(line.split(" ", 1) for line in (group / "memory.stat").read_text().splitlines())
+            memory = sum(int(stat[name]) for name in ("anon", "shmem", "kernel"))
             swap = int((group / "memory.swap.current").read_text())
             return ResourceObservation(available, memory, swap, True)
         except (OSError, ValueError, KeyError, StopIteration):

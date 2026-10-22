@@ -383,7 +383,7 @@ original=LinuxResources.observe
 def observe(self,**kwargs):
     state=original(self,**kwargs)
     if Path({str(trigger)!r}).exists():
-        return ResourceObservation(state.available,636911616,state.browser_swap,state.constrained)
+        return ResourceObservation(state.available,1153433600,state.browser_swap,state.constrained)
     return state
 LinuxResources.observe=observe
 module=sys.argv.pop(1)

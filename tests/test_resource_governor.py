@@ -6,26 +6,43 @@ from youtube_strataread.workbench.resource_governor import ResourceGovernor, Res
 
 
 def test_memory_pressure_waits_then_recovers_without_granting_permission():
-    observed = [ResourceObservation(available=1024**3, browser_memory=0, browser_swap=0, constrained=True)]
+    observed = [ResourceObservation(available=1024**3, browser_unreclaimable=0, browser_swap=0, constrained=True)]
     governor = ResourceGovernor(observe=lambda: observed[0])
     with pytest.raises(ContentSessionError, match="内存") as error:
         governor.require_browser_start()
     assert error.value.kind == "resource"
     assert governor.status()["browser_waiting"]
-    observed[0] = ResourceObservation(available=2*1024**3, browser_memory=0, browser_swap=0, constrained=True)
+    observed[0] = ResourceObservation(available=2*1024**3, browser_unreclaimable=0, browser_swap=0, constrained=True)
     governor.require_browser_start()
     assert not governor.status()["browser_waiting"]
 
 
 def test_live_pressure_releases_browser_without_confusing_startup_reserve():
-    observed = [ResourceObservation(available=800*1024**2, browser_memory=400*1024**2, browser_swap=0, constrained=True)]
+    observed = [ResourceObservation(available=800*1024**2, browser_unreclaimable=400*1024**2, browser_swap=0, constrained=True)]
     governor = ResourceGovernor(observe=lambda: observed[0])
     assert not governor.status()["release_browser"]
     governor.require_captions()
-    observed[0] = ResourceObservation(available=800*1024**2, browser_memory=620*1024**2, browser_swap=0, constrained=True)
+    observed[0] = ResourceObservation(available=800*1024**2, browser_unreclaimable=1100*1024**2, browser_swap=0, constrained=True)
     assert governor.status()["release_browser"]
     with pytest.raises(ContentSessionError, match="释放"):
         governor.require_captions()
+
+
+def test_running_host_floor_is_384_mib_while_launch_still_needs_1_25_gib():
+    observed = [ResourceObservation(384*1024**2, 0, 0, True)]
+    governor = ResourceGovernor(observe=lambda: observed[0])
+    state = governor.status()
+    assert not state["release_browser"] and not state["captions_waiting"] and state["browser_waiting"]
+    governor.require_captions()
+    observed[0] = ResourceObservation(383*1024**2, 0, 0, True)
+    assert governor.status()["release_browser"]
+    with pytest.raises(ContentSessionError, match="可用内存不足"):
+        governor.require_captions()
+    observed[0] = ResourceObservation(1279*1024**2, 0, 0, True)
+    with pytest.raises(ContentSessionError, match="1.25 GiB"):
+        governor.require_browser_start()
+    observed[0] = ResourceObservation(1280*1024**2, 0, 0, True)
+    governor.require_browser_start()
 
 
 def test_kernel_contract_rejects_unbounded_display_group_and_host_group(tmp_path):
@@ -36,8 +53,9 @@ def test_kernel_contract_rejects_unbounded_display_group_and_host_group(tmp_path
     (proc / 'self/cgroup').write_text('0::/edison/backend\n')
     cgroups = tmp_path / 'cgroup'
     group = cgroups / 'edison/browser'; group.mkdir(parents=True)
-    for name, value in {'memory.max':'805306368', 'memory.high':'603979776', 'memory.swap.max':'0',
-                        'memory.current':'100000000', 'memory.swap.current':'0', 'cgroup.procs':'999999'}.items():
+    for name, value in {'memory.max':'1342177280', 'memory.high':'1207959552', 'memory.swap.max':'0',
+                        'memory.stat':'anon 0\nfile 0\nkernel 0\nshmem 0\n', 'memory.swap.current':'0',
+                        'cgroup.procs':'999999'}.items():
         (group / name).write_text(value)
     kernel = LinuxResources(group, proc=proc, cgroup_root=cgroups)
     assert kernel.observe().constrained
@@ -51,22 +69,22 @@ def test_kernel_contract_rejects_unbounded_display_group_and_host_group(tmp_path
 def test_session_defers_explicit_open_and_recovers_until_user_closes(tmp_path):
     from youtube_strataread.workbench.content_session import ContentSession
     from test_content_session import Browser
-    observed = [ResourceObservation(available=1024**3, browser_memory=0, browser_swap=0, constrained=True)]
+    observed = [ResourceObservation(available=1024**3, browser_unreclaimable=0, browser_swap=0, constrained=True)]
     browser = Browser()
     session = ContentSession(tmp_path/'content', browser=browser, resources=ResourceGovernor(observe=lambda: observed[0]))
     with pytest.raises(ContentSessionError, match='内存'):
         session.open()
     assert not browser.running
     assert session.status()['state'] == 'waiting_resources'
-    observed[0] = ResourceObservation(available=2*1024**3, browser_memory=0, browser_swap=0, constrained=True)
+    observed[0] = ResourceObservation(available=2*1024**3, browser_unreclaimable=0, browser_swap=0, constrained=True)
     session.tick()
     assert browser.running
-    observed[0] = ResourceObservation(available=400*1024**2, browser_memory=620*1024**2, browser_swap=0, constrained=True)
+    observed[0] = ResourceObservation(available=300*1024**2, browser_unreclaimable=0, browser_swap=0, constrained=True)
     session.tick()
     assert not browser.running
     assert session.status()['state'] == 'waiting_resources'
     session.close_browser()
-    observed[0] = ResourceObservation(available=2*1024**3, browser_memory=0, browser_swap=0, constrained=True)
+    observed[0] = ResourceObservation(available=2*1024**3, browser_unreclaimable=0, browser_swap=0, constrained=True)
     session.tick()
     assert not browser.running
     session.shutdown()
@@ -84,16 +102,51 @@ def test_native_start_fails_closed_without_kernel_budget(tmp_path, monkeypatch):
     assert not browser.alive
 
 
-@pytest.mark.parametrize('limit,high', [('536870912','402653184'),('805306368','max'),('1073741824','603979776')])
-def test_smaller_or_unbounded_kernel_budget_cannot_reuse_fixed_release_headroom(tmp_path, limit, high):
+def kernel_fixture(tmp_path, *, limit='1342177280', high='1207959552', stat='anon 0\nfile 0\nkernel 0\nshmem 0\n',
+                   swap='0', available_kb=2000000):
     from youtube_strataread.workbench.resource_governor import LinuxResources
     proc=tmp_path/'proc'; (proc/'self').mkdir(parents=True)
-    (proc/'meminfo').write_text('MemAvailable: 2000000 kB\n')
+    (proc/'meminfo').write_text(f'MemAvailable: {available_kb} kB\n')
     (proc/'self/cgroup').write_text('0::/backend\n')
     root=tmp_path/'cgroup'; group=root/'browser'; group.mkdir(parents=True)
-    for name, value in {'memory.max':limit,'memory.high':high,'memory.swap.max':'0','memory.current':'0','memory.swap.current':'0'}.items():
-        (group/name).write_text(value)
-    assert not LinuxResources(group,proc=proc,cgroup_root=root).observe().constrained
+    files = {'memory.max':limit,'memory.high':high,'memory.swap.max':'0','memory.stat':stat,'memory.swap.current':swap}
+    for name, value in files.items():
+        if value is not None:
+            (group/name).write_text(value)
+    return LinuxResources(group,proc=proc,cgroup_root=root)
+
+
+def test_reclaimable_file_cache_does_not_release_but_unreclaimable_usage_does(tmp_path):
+    # Logged-in YouTube replay: ~906 MiB anon+shmem+kernel with ~290 MiB file cache.
+    kernel = kernel_fixture(tmp_path, stat='anon 734003200\nfile 304087040\nkernel 104857600\nshmem 83886080\n')
+    observed = kernel.observe()
+    assert observed.constrained and observed.browser_unreclaimable == 922746880
+    governor = ResourceGovernor(observe=kernel.observe)
+    assert not governor.status()['release_browser']
+    governor.require_browser_start()
+    (kernel.group/'memory.stat').write_text('anon 851443712\nfile 304087040\nkernel 104857600\nshmem 117440512\n')
+    state = governor.status()
+    assert state['release_browser'] and state['browser_unreclaimable_bytes'] == 1024*1024**2
+
+
+def test_any_browser_swap_releases(tmp_path):
+    kernel = kernel_fixture(tmp_path, stat='anon 104857600\nfile 0\nkernel 0\nshmem 0\n', swap='4096')
+    assert ResourceGovernor(observe=kernel.observe).status()['release_browser']
+
+
+@pytest.mark.parametrize('stat', [None, 'anon 0\nfile 0\nshmem 0\n', 'anon x\nfile 0\nkernel 0\nshmem 0\n'])
+def test_unreadable_memory_stat_is_unconstrained_not_old_current_criterion(tmp_path, stat):
+    kernel = kernel_fixture(tmp_path, stat=stat)
+    (kernel.group/'memory.current').write_text('0')
+    assert not kernel.observe().constrained
+    state = ResourceGovernor(observe=kernel.observe).status()
+    assert state['release_browser'] and state['browser_waiting'] and '隔离不可用' in state['reason']
+
+
+@pytest.mark.parametrize('limit,high', [('805306368','603979776'),('1073741824','1207959552'),
+                                        ('1342177280','max'),('1342177280','1275068416'),('max','1207959552')])
+def test_smaller_or_unbounded_kernel_budget_cannot_reuse_fixed_release_headroom(tmp_path, limit, high):
+    assert not kernel_fixture(tmp_path, limit=limit, high=high).observe().constrained
 
 
 def test_native_command_preserves_resource_exit_before_next_status_poll():
@@ -140,18 +193,16 @@ def test_nonresource_start_failure_does_not_replay_human_open_on_heartbeat(tmp_p
         session.shutdown()
 
 
-def test_observed_youtube_reclaim_plateau_releases_before_kernel_high():
-    # Public-page replay: peak 636911616 B (< old 608 MiB release),
-    # memory.events high 78757 and PSI full total ~44 s despite zero OOM.
-    observed = [ResourceObservation(available=2*1024**3, browser_memory=636911616, browser_swap=0, constrained=True)]
+def test_measured_logged_in_youtube_peak_stays_open_below_unreclaimable_release():
+    # Logged-in isolated replay peaked at 906 MiB anon+shmem+kernel, zero swap.
+    observed = [ResourceObservation(available=2*1024**3, browser_unreclaimable=906*1024**2, browser_swap=0, constrained=True)]
     governor = ResourceGovernor(observe=lambda: observed[0])
-    assert governor.status()['release_browser']
-    # Leave 32 MiB below the operator-owned 576 MiB high watermark.
-    observed[0] = ResourceObservation(2*1024**3, 544*1024**2, 0, True)
-    assert governor.status()['release_browser']
-    observed[0] = ResourceObservation(2*1024**3, 500*1024**2, 0, True)
     assert not governor.status()['release_browser']
     governor.require_browser_start()
+    observed[0] = ResourceObservation(2*1024**3, 1023*1024**2, 0, True)
+    assert not governor.status()['release_browser']
+    observed[0] = ResourceObservation(2*1024**3, 1024*1024**2, 0, True)
+    assert governor.status()['release_browser']
 
 
 @pytest.mark.parametrize("stubborn_descendant", [False, True])
@@ -176,7 +227,7 @@ time.sleep(2)
 print('true,"result":{}}',flush=True)
 """)
     monkeypatch.setattr(LinuxResources, 'observe', lambda self, **_: ResourceObservation(
-        2*1024**3, 636911616 if marker.exists() else 0, 0, True))
+        2*1024**3, 1153433600 if marker.exists() else 0, 0, True))
     browser = ServerBrowser(command_timeout=.5)
     browser.process = subprocess.Popen([sys.executable, str(worker), str(marker), child if stubborn_descendant else '', str(ticks)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
@@ -186,7 +237,7 @@ print('true,"result":{}}',flush=True)
         with pytest.raises(ContentSessionError) as error:
             browser.command('screen', {})
         assert error.value.kind == 'resource', str(error.value)
-        assert browser.last_resource_release['browser_memory_bytes'] == 636911616
+        assert browser.last_resource_release['browser_unreclaimable_bytes'] == 1153433600
         assert not browser.alive
         assert process.poll() is not None
         assert time.monotonic() - started < (4.5 if stubborn_descendant else 1.5)
@@ -221,13 +272,13 @@ time.sleep(2)
     session = ContentSession(tmp_path/'content', browser=browser, resources=ResourceGovernor(observe=lambda:observed[0]))
     try:
         session.open()
-        observed[0] = ResourceObservation(2*1024**3, 636911616, 0, True)
+        observed[0] = ResourceObservation(2*1024**3, 1153433600, 0, True)
         started = time.monotonic()
         session.tick()
         assert time.monotonic()-started < 1
         assert not session.status()['browser_running']
         assert session.status()['state'] == 'waiting_resources'
-        assert browser.last_resource_release['browser_memory_bytes'] == 636911616
+        assert browser.last_resource_release['browser_unreclaimable_bytes'] == 1153433600
     finally:
         session.shutdown()
 
@@ -261,7 +312,7 @@ time.sleep(2)
         browser.start(tmp_path/'profile')
         runtime = Path(json.loads(owned.read_text()))
         assert (runtime/'Xauthority').exists()
-        observed[0] = ResourceObservation(2*1024**3, 636911616, 0, True)
+        observed[0] = ResourceObservation(2*1024**3, 1153433600, 0, True)
         with pytest.raises(ContentSessionError) as error:
             browser.command('screen', {})
         assert error.value.kind == 'resource'
