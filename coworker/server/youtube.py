@@ -37,6 +37,7 @@ from youtube_strataread.workbench.library import (
     PreparationService,
     YtDlpCaptions,
 )
+from youtube_strataread.workbench.migration import HistoricalMigration
 from youtube_strataread.workbench.sidecar import handle_request
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
@@ -124,6 +125,8 @@ class YouTubeWorkbench:
         )
         self.connection.claim_server_ownership()
         self.cutover = CutoverHold(self.workspace)
+        self.migration = HistoricalMigration(
+            self.workspace, self.connection.vault, identity_lock=self.connection._identity_lock)
         from youtube_strataread.workbench.content_session import ContentSession
         self.managed_content = bool(os.environ.get("EDISON_CONTENT_SESSION_DIR"))
         content_root = Path(os.environ.get(
@@ -284,14 +287,31 @@ class YouTubeWorkbench:
                 draft = _summary_text(compressed)
             return self.workspace.save_summary(video_id, _bounded_summary(draft))
 
+    def _cutover_status(self) -> dict[str, Any]:
+        status = self.cutover.status()
+        status["migration"] = self.migration.status()
+        return status
+
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if capability.startswith("cutover."):
             if capability == "cutover.begin":
-                return {"ok": True, "result": self.cutover.begin(self.stop)}
+                self.cutover.begin(self.stop)
+                return {"ok": True, "result": self._cutover_status()}
             if capability == "cutover.abort":
-                return {"ok": True, "result": self.cutover.abort()}
+                self.cutover.abort()
+                return {"ok": True, "result": self._cutover_status()}
             if capability == "cutover.status":
-                return {"ok": True, "result": self.cutover.status()}
+                return {"ok": True, "result": self._cutover_status()}
+            if capability == "cutover.migrate":
+                try:
+                    migrated = self.migration.run(arguments)
+                except CutoverBlocked as error:
+                    return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+                except ValueError as error:
+                    return {"ok": False, "error": str(error)}
+                except OSError:
+                    return {"ok": False, "error": "历史迁移没有完成，可在切换暂停内再次执行。"}
+                return {"ok": True, "result": {**self._cutover_status(), "migration": migrated}}
             return {"ok": False, "error": "不支持的切换操作。"}
         # Reads and the person's newer withdrawals/permission choices remain
         # available. Everything that can start work or write credentials joins
@@ -558,7 +578,7 @@ class YouTubeWorkbench:
         if response.get("ok") and capability == "activity.snapshot":
             response["result"].update(
                 {
-                    "cutover": self.cutover.status(),
+                    "cutover": self._cutover_status(),
                     "resources": self.resources.status() if self.resources else None,
                     "runtime": {
                         "heartbeat_at": self.heartbeat_at,
