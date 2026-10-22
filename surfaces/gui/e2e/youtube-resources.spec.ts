@@ -11,7 +11,7 @@ test('resource waiting preserves active manuscripts, yields to retained work and
   let url = '';
   let now = Math.floor(Date.now()/1000);
   const advance = async () => { now += 30; await writeFile(join(root, 'clock'), String(now)); };
-  const resources = async (available: number, browser = 0) => writeFile(join(root,'resources.json'), JSON.stringify({available:available*1048576,browser_memory:browser*1048576,browser_swap:0,constrained:true}));
+  const resources = async (available: number, browser = 0) => writeFile(join(root,'resources.json'), JSON.stringify({available:available*1048576,browser_unreclaimable:browser*1048576,browser_swap:0,constrained:true}));
   const call = async (capability: string, args = {}) => {
     const result = await (await request.post(url+'/v1/youtube/capability', {headers:{'X-OpenWorker-Token':'content-e2e'},data:{capability,arguments:args}})).json();
     expect(result.ok, result.error).toBe(true); return result.result;
@@ -43,7 +43,7 @@ test('resource waiting preserves active manuscripts, yields to retained work and
     await advance();
     await call('manual.submit',{url:'https://youtu.be/one00000001',request_id:'resource-active'});
     await expect.poll(async()=>{await advance(); try{return await readFile(join(root,'model-active'),'utf8');}catch{return '';}},{timeout:20000}).toBe('active');
-    await resources(400);
+    await resources(300);
     await call('manual.submit',{url:'https://youtu.be/two00000002',request_id:'resource-wait'});
     await call('manual.submit',{url:'https://youtu.be/cancel00003',request_id:'resource-cancel'});
     await call('activity.cancel',{video_ids:['cancel00003']});
@@ -66,14 +66,14 @@ test('resource waiting preserves active manuscripts, yields to retained work and
     await writeFile(join(root,'caption-metadata-hold'),'1'); await advance();
     await call('manual.submit',{url:'https://youtu.be/race0000004',request_id:'resource-race'});
     await expect.poll(async()=>{await advance(); try{return await readFile(join(root,'caption-metadata-active'),'utf8');}catch{return '';}},{timeout:20000}).toBe('race0000004');
-    await resources(400); await rm(join(root,'caption-metadata-hold'));
+    await resources(300); await rm(join(root,'caption-metadata-hold'));
     await expect.poll(async()=>(await call('library.inspect',{video_id:'race0000004'})).preparation_state).toBe('queued');
     expect((await call('activity.snapshot')).failed).toBe(0);
     await resources(2048); await advance();
     await expect.poll(async()=>{await advance(); return (await call('library.inspect',{video_id:'race0000004'})).manuscript_version;},{timeout:20000}).toBe(1);
     await content.getByRole('button',{name:'打开登录画面',exact:true}).click();
     await expect(content.getByAltText('服务器登录页面')).toBeVisible();
-    await resources(800,620);
+    await resources(800,1100);
     await expect(content.getByRole('status')).toHaveText('等待服务器资源');
     await expect(content.getByAltText('服务器登录页面')).toHaveCount(0);
     expect((await call('content_session.status')).snapshot_present).toBe(true);
