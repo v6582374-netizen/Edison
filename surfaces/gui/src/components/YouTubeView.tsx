@@ -397,7 +397,13 @@ export function YouTubeView({
         <strong>{yt(activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
         <p>{yt(activity.cutover.reason || "")}</p>
         <p>{yt("Auto Update 的选择与已接收请求保持不变；仍可阅读、取消处理或断开 YouTube。")}</p>
+        <p>{yt(activity.cutover.migration?.stage_label || "尚未迁移")}</p>
+        {(activity.cutover.migration?.unknown.length ?? 0) > 0 && <>
+          <p>{yt("待核对 {{count}} 项", {count: activity.cutover.migration?.unknown.length})}</p>
+          <ul>{activity.cutover.migration?.unknown.map(item => <li key={item.video_id}>{item.title}</li>)}</ul>
+        </>}
         {activity.cutover.state !== "aborted" && activity.cutover.deadline_at && <p>{yt("本次尝试截止：{{deadline}}", {deadline: new Date(activity.cutover.deadline_at * 1000).toLocaleString()})}</p>}
+        <button className="yp-btn" onClick={() => void call("cutover.migrate").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("执行历史迁移")}</button>
         {activity.cutover.state !== "aborted" && <button className="yp-btn" onClick={() => void call("cutover.abort").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("中止切换并保持采集暂停")}</button>}
       </section>}
       <header className="yp-head">

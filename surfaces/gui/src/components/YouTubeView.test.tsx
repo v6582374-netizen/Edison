@@ -305,3 +305,35 @@ it("hands the original video to the native browser capability rather than a webv
   );
   await screen.findByText("已在默认浏览器中打开原始视频。");
 });
+
+it("shows the historical migration stage and items that still need review", async () => {
+  const implementation = call.getMockImplementation()!;
+  call.mockImplementation(async (capability, args) => {
+    if (capability === "activity.snapshot") return {
+      ...activity,
+      cutover: {
+        held: true,
+        state: "ready",
+        reason: "在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。",
+        migration: {
+          stage: "complete",
+          stage_label: "历史迁移已完成",
+          finished: true,
+          client_match: true,
+          permission_error: false,
+          identity_withdrawn: false,
+          unknown: [{video_id: "legacyunknwn", title: "未知失败样本"}],
+        },
+      },
+    };
+    if (capability === "cutover.migrate") return {};
+    return implementation(capability, args);
+  });
+  render(<YouTubeView onModelSettings={() => {}} onTranslationSettings={() => {}} />);
+  const region = await screen.findByRole("region", {name: "YouTube 切换暂停"});
+  expect(region.textContent).toContain("历史迁移已完成");
+  expect(region.textContent).toContain("待核对 1 项");
+  expect(region.textContent).toContain("未知失败样本");
+  fireEvent.click(screen.getByRole("button", {name: "执行历史迁移"}));
+  await waitFor(() => expect(call).toHaveBeenCalledWith("cutover.migrate"));
+});
