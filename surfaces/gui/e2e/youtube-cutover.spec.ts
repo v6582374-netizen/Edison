@@ -29,8 +29,9 @@ test('cutover hold is independent of Auto Update and persists as read-only after
   try {
     await start();
     await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}});
-      await route.fulfill({response});
+      // Page polling keeps running while the backend restarts.
+      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
+      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
     });
     await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
     await page.goto('/');await page.getByTestId('nav-youtube').click();
@@ -82,8 +83,9 @@ test('cutover deadline retains long task results and latest withdrawals while al
   try {
     await start();
     await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}});
-      await route.fulfill({response});
+      // Page polling keeps running while the backend restarts.
+      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
+      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
     });
     await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
     await page.goto('/');await page.getByTestId('nav-youtube').click();
@@ -172,8 +174,9 @@ test('cutover waits for actual caption child exit and saved manuscript', async (
   try {
     await start();
     await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}});
-      await route.fulfill({response});
+      // Page polling keeps running while the backend restarts.
+      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
+      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
     });
     await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
     await page.goto('/');await page.getByTestId('nav-youtube').click();
@@ -238,8 +241,9 @@ test('historical migration keeps explicit stages, unknown failures and the lates
   try {
     await start();
     await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}});
-      await route.fulfill({response});
+      // Page polling keeps running while the backend restarts.
+      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
+      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
     });
     await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
     await page.goto('/');await page.getByTestId('nav-youtube').click();
