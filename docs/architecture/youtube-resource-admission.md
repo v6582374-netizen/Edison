@@ -11,7 +11,11 @@ Reading and already executing model work are never terminated by this governor.
 ## Linux deployment contract
 
 Provision a dedicated cgroup v2 child for the entire native browser/display tree:
-`memory.max=1342177280`, `memory.high=1207959552`, `memory.swap.max=0` (1280/1152/0 MiB).
+`memory.max=1342177280`, `memory.high=1207959552`, `memory.swap.max=0` (1280/1152/0 MiB),
+and `cpu.max` exactly `50000 100000` (half a core). On the 2-vCPU host an uncapped
+YouTube page used about 1.7 cores and increased reading P95 by 579 ms; the half-core
+cap brought the pooled increase to 199.5 ms, within max(20% of baseline, 200 ms).
+A quarter-core cap was not accepted: that run lost a screenshot request and is incomplete.
 Set `EDISON_CONTENT_CGROUP_DIR` to its absolute path under `/sys/fs/cgroup` and
 retain `EDISON_CONTENT_BROWSER_ENABLED=1` only for an admitted installation.
 The host must remain outside that child. Its service identity may write only the
