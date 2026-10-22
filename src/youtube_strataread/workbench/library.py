@@ -125,7 +125,7 @@ class PreparationService:
         if isinstance(error, YouTubeRequestsStopped) or getattr(error, "kind", None) == "invalidated":
             self.workspace.set_preparation_state(video_id, "queued")
             return True
-        if getattr(error, "kind", None) == "resource":
+        if getattr(error, "kind", None) in {"resource", "session"}:
             self.workspace.set_preparation_state(video_id, "queued")
             return True
         limited = rate_limit_error(error, now=self.workspace.now())
@@ -168,7 +168,9 @@ class PreparationService:
         with self._claim_lock:
             if self._stopping:
                 return False
-            acquisition_allowed = not self.resources or not self.resources.status()["captions_waiting"]
+            session = getattr(self.captions, "content_session", None)
+            acquisition_allowed = ((not self.resources or not self.resources.status()["captions_waiting"])
+                                   and (session is None or session.acquisition_ready()))
             asset = self.workspace.claim_next_queued_asset(self.model_account, acquisition_allowed=acquisition_allowed)
         if asset is None:
             return False

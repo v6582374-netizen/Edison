@@ -15,6 +15,7 @@ from translation_fixture import EchoModel
 from coworker.providers.base import AssistantTurn, TokenUsage
 from coworker.server.youtube import HostManuscripts, YouTubeWorkbench, _bounded_summary
 from youtube_strataread.downloader.youtube import SubtitleResult
+from youtube_strataread.workbench.cutover import CutoverHold
 from youtube_strataread.workbench.discovery import Candidate
 from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
@@ -241,6 +242,8 @@ def test_summary_is_generated_once_per_video_and_survives_prompt_and_manuscript_
                               get_settings=lambda: {"model_ready": True})
     workbench = object.__new__(YouTubeWorkbench)
     workbench.workspace = ws
+    workbench.cutover = CutoverHold(ws)
+    workbench.managed_content = False
     workbench.manager = manager
     workbench.summary_locks = {}
     workbench.summary_locks_guard = threading.Lock()
@@ -278,6 +281,8 @@ def test_failed_summary_can_retry_without_saving_and_length_is_bounded(tmp_path)
                               get_settings=lambda: {"model_ready": True})
     workbench = object.__new__(YouTubeWorkbench)
     workbench.workspace = ws
+    workbench.cutover = CutoverHold(ws)
+    workbench.managed_content = False
     workbench.manager = manager
     workbench.summary_locks = {}
     workbench.summary_locks_guard = threading.Lock()
@@ -306,6 +311,8 @@ def test_simultaneous_summary_requests_share_one_generation(tmp_path):
                               get_settings=lambda: {"model_ready": True})
     workbench = object.__new__(YouTubeWorkbench)
     workbench.workspace = ws
+    workbench.cutover = CutoverHold(ws)
+    workbench.managed_content = False
     workbench.manager = manager
     workbench.summary_locks = {}
     workbench.summary_locks_guard = threading.Lock()
