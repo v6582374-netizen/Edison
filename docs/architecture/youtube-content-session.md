@@ -92,7 +92,7 @@ evidence requirements.
 This implementation does **not** grant production admission. Browser startup is
 opt-in and off by default. Provision and test a constrained browser process group
 before enabling it in production; a process group alone does not enforce the
-768 MiB combined memory/swap requirement. Do not set the enable flag on the live
+1280 MiB memory ceiling with zero swap. Do not set the enable flag on the live
 instance until resource admission, recovery drills and the controlled maintenance
 window are approved. Automatic maintenance is not part of this slice.
 
@@ -112,7 +112,7 @@ For an isolated test deployment using a fixed non-root service identity:
    Authentication snapshots must stay out of asset backups and exports.
 3. Provision the dedicated cgroup and `EDISON_CONTENT_CGROUP_DIR` according to
    [resource admission](youtube-resource-admission.md), including the exact
-   768 MiB memory, 576 MiB high and zero swap limits. In the isolated environment
+   1280 MiB memory, 1152 MiB high and zero swap limits. In the isolated environment
    only, set `EDISON_CONTENT_BROWSER_ENABLED=1`.
    Restart the host normally. This flag enables the adapter, not resource or
    sustained-availability acceptance. If the state-directory setting is absent,
@@ -190,8 +190,8 @@ above supersedes the earlier absence of fresh-profile external evidence. See
 [Google supported-browser guidance](https://support.google.com/accounts/answer/7675428).
 
 Production was unchanged. A previous real YouTube browser run exhausted its
-768 MiB cgroup limit; later functional success does not erase that resource
-failure or establish admission. Busy-workload coexistence and reading P95
+former 768 MiB cgroup limit; later functional success does not erase that resource
+failure or establish admission under the current 1280 MiB budget. Busy-workload coexistence and reading P95
 acceptance remain outstanding under [#52](https://github.com/v6582374-netizen/Edison/issues/52).
 Natural Cookie rotation, whole-host crash/reboot, production deployment and
 service-account permissions, and the 14-day trial remain unverified. A normal

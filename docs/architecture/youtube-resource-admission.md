@@ -11,13 +11,15 @@ Reading and already executing model work are never terminated by this governor.
 ## Linux deployment contract
 
 Provision a dedicated cgroup v2 child for the entire native browser/display tree:
-`memory.max=805306368`, `memory.high=603979776`, `memory.swap.max=0` (768/576/0 MiB).
+`memory.max=1342177280`, `memory.high=1207959552`, `memory.swap.max=0` (1280/1152/0 MiB).
 Set `EDISON_CONTENT_CGROUP_DIR` to its absolute path under `/sys/fs/cgroup` and
 retain `EDISON_CONTENT_BROWSER_ENABLED=1` only for an admitted installation.
 The host must remain outside that child. Its service identity may write only the
-child's `cgroup.procs`; limit files remain operator-owned. The product verifies
-limits; it does not elevate privilege or write resource settings. A smaller
-budget cannot reuse the fixed release headroom and is rejected too.
+child's `cgroup.procs` and must be able to read its `memory.stat` and
+`memory.swap.current`; limit files remain operator-owned. The product verifies
+limits; it does not elevate privilege or write resource settings. Any other
+budget, smaller or unbounded, cannot reuse the fixed release threshold and is
+rejected too.
 
 The driver joins this child **before** starting Xvfb, x11vnc or Chrome. Existing
 service wrappers which already place the driver there remain supported. Every
@@ -27,8 +29,12 @@ than merely measuring launch memory. Operators must retain control-group cleanup
 on service stop. A private profile is not permission to run without kernel limits.
 
 Launch needs actual `/proc/meminfo` MemAvailable >= 1280 MiB. Once running,
-MemAvailable below 512 MiB or browser group memory >= 544 MiB triggers
-browser release before the 576 MiB high watermark and 768 MiB hard ceiling.
+MemAvailable below 384 MiB, any browser group swap, or unreclaimable browser
+group memory (`memory.stat` anon + shmem + kernel) >= 1024 MiB triggers browser
+release. `memory.current` is not the criterion: it includes file cache, which the
+kernel reclaims at the 1152 MiB high watermark (measured at roughly 250-290 MiB on
+YouTube pages). An unreadable or incomplete `memory.stat` counts as missing
+isolation, never as a fallback to `memory.current`.
 The driver samples cheap memory observations every 100 ms between desktop operations; the host also checks on its
 heartbeat. The host also observes every 100 ms while waiting for a native
 response, including partial screenshot frames, so a stalled desktop cannot suspend
@@ -41,9 +47,13 @@ resource release too. Ordinary close retains its graceful profile path. The host
 creates and owns the exact private display runtime directory passed to its child,
 and removes that directory after close even if termination bypasses child cleanup.
 Healthy-memory response timeouts remain maintenance failures. Desktop listener
-inspection retains its separate one-second cadence. The 32 MiB headroom below
-the kernel high watermark provides margin before reclaim stalls Chrome. It is
-not proof against every burst allocation: measured peak, high pressure, OOM counters and full close latency must be checked on the target host.
+inspection retains its separate one-second cadence. Releasing at 1024 MiB of
+unreclaimable memory leaves 128 MiB below the high watermark and 256 MiB below the
+hard ceiling for file cache and allocation between samples. Isolated measurement
+(2026-10-22) peaked at 906 MiB unreclaimable on a logged-in profile with zero
+swap and no high, max or OOM events. That margin is not proof against every burst
+allocation: measured peak, high pressure, OOM counters and full close latency
+must be checked on the target host.
 A burst or unresponsive browser can still reach the hard ceiling; such a run is
 not acceptable evidence of safe coexistence.
 
@@ -104,7 +114,8 @@ admission are written out. The launch-admission probe never starts a second
 browser or creates artificial host pressure.
 
 Run an independent whole-cgroup sampler at <=250 ms alongside this harness;
-include kernel memory.peak, swap, memory.events (including OOM), pressure,
+include kernel memory.peak, memory.stat anon/shmem/kernel/file, swap,
+memory.events (including OOM), pressure,
 process membership, host MemAvailable and swap-in/out. Verify populated=0 and
 no native descendants after close. Compute nearest-rank P95 separately by block
 and pooled condition; delta must be <= max(20% baseline P95, 200 ms). Failures,
