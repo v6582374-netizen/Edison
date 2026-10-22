@@ -54,15 +54,26 @@ class Browser:
     def start(self, profile):
         profile.mkdir(parents=True, exist_ok=True)
         (root / 'browser-running').touch()
+        with (root / 'browser-starts.jsonl').open('a') as log:
+            log.write(json.dumps({'at': now()})+'\n')
     def release_resources(self, observation=None):
         self.close()
 
     def close(self):
         (root / 'browser-running').unlink(missing_ok=True)
     def snapshot(self):
+        if (root / 'snapshot-hold').exists():
+            (root / 'snapshot-held').touch()
+            deadline = time.monotonic() + 60
+            while (root / 'snapshot-hold').exists() and time.monotonic() < deadline:
+                time.sleep(.02)
         if not (root / 'youtube-login').exists():
             raise ContentSessionError('user', '请在 YouTube 页面完成登录及站点交接。')
-        return '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session\n'
+        # Each orderly profile close yields a distinct session value.
+        counter = root / 'snapshot-count'
+        count = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(count))
+        return f'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session-{count}\n'
     def command(self, command, args):
         if command == 'text':
             (root / 'browser-input').write_text(args['text'])

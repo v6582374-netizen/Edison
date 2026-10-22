@@ -136,7 +136,9 @@ class YouTubeWorkbench:
             raise ConnectionError("内容会话目录必须是资料库之外的稳定绝对路径。")
         from youtube_strataread.workbench.resource_governor import ResourceGovernor
         self.resources = ResourceGovernor() if self.managed_content else None
-        self.content_session = ContentSession(content_root, resources=self.resources)
+        self.content_session = ContentSession(content_root, resources=self.resources,
+                                              requests=self.workspace.youtube_requests,
+                                              unattended=self.managed_content)
         if self.managed_content:
             self.connection.resume_disconnection(clear_content=self.content_session.clear)
         self.workspace.recover_interrupted_preparations()
