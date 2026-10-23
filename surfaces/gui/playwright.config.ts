@@ -3,7 +3,8 @@ import { defineConfig, devices } from "@playwright/test";
 // E2E harness for the GUI. Tests are hermetic: every /v1 request and the event WebSocket are mocked
 // at the network layer (see e2e/fixtures.ts), so they run without the Python backend and never
 // mutate real state — safe for CI and for asserting regressions in the interaction flows.
-const PORT = 5199;
+// EDISON_E2E_PORT lets parallel worktrees avoid reusing each other's dev server.
+const PORT = Number(process.env.EDISON_E2E_PORT || 5199);
 
 export default defineConfig({
   testDir: "./e2e",

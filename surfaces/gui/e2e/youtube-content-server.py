@@ -6,9 +6,11 @@ import socket
 import sys
 import time
 from datetime import datetime, timezone
+from email.message import Message
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
 root = Path(sys.argv[1])
 measurement = len(sys.argv) > 2 and sys.argv[2] == "native-measurement"
@@ -16,7 +18,9 @@ if measurement:
     (root / "measurement").touch()
 os.environ.update(COWORKER_STATE_DIR=str(root / 'host'), COWORKER_API_TOKEN='content-e2e',
     YOUTUBE_WORKBENCH_WORKSPACE=str(root / 'library'), EDISON_CONTENT_SESSION_DIR=str(root / 'content'),
-    EDISON_CREDENTIAL_FILE=str(root / 'credentials.json'))
+    EDISON_CREDENTIAL_FILE=str(root / 'credentials.json'),
+    # Every Google/YouTube response here is a substitute: evidence is controlled.
+    EDISON_ACCEPTANCE_CONTROLLED='1')
 sys.path.insert(0, str(Path.cwd() / 'tests'))
 import uvicorn
 from shorts_fixture import player_page
@@ -103,8 +107,12 @@ def google(request, timeout=30):
         result = response({}); result.status = 200
         return result
     if parsed.hostname == 'oauth2.googleapis.com':
+        if (root / 'oauth-invalid-grant').exists():
+            raise HTTPError(url, 400, 'Bad Request', Message(), BytesIO(b'{"error":"invalid_grant"}'))
         return response({'access_token':'fixture-access','expires_in':86400})
     endpoint = parsed.path.rsplit('/',1)[-1]
+    if endpoint == 'subscriptions' and (root / 'oauth-invalid-grant').exists():
+        raise HTTPError(url, 401, 'Unauthorized', Message(), BytesIO(b'{}'))
     if endpoint == 'subscriptions':
         if (root / 'hold-subscriptions').exists():
             (root / 'subscriptions-held').touch()

@@ -11,6 +11,8 @@ import { AddVideo, type VideoRequest } from "./youtube/AddVideo";
 import { RequestedVideo, RequestedDocument } from "./youtube/RequestedVideo";
 import { YouTubeSessionSettings } from "./YouTubeSessionSettings";
 import { OfficialAuthorization } from "./youtube/OfficialAuthorization";
+import { CapabilityNotice } from "./youtube/CapabilityHealth";
+import { AcceptancePanel } from "./youtube/AcceptancePanel";
 import { Dialog } from "./youtube/Dialog";
 import { DocumentViews, ChannelAvatar } from "./youtube/DocumentViews";
 import {
@@ -393,6 +395,7 @@ export function YouTubeView({
   return (
     <main ref={mainRef} tabIndex={-1} {...modal.capture} className={`yp-main${page === "documents" ? " yp-documents" : ""}`} aria-label={yt("YouTube 资料库")}>
       <NoticeStack messages={[message, progressMessage, panel ? "" : panelMessage, activity?.discovery_error || ""].map(value => value ? yt(value) : "")} />
+      <CapabilityNotice health={activity?.health} />
       {activity?.cutover?.held && <section aria-label={yt("YouTube 切换暂停")} className="yp-maintenance" role="region">
         <strong>{yt(activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
         <p>{yt(activity.cutover.reason || "")}</p>
@@ -419,6 +422,7 @@ export function YouTubeView({
               <summary>{yt("维护工具")}</summary>
               <p>{yt("切换暂停会等待在途成果保存，并暂停新的采集与连接变更。重启不会自动恢复采集。")}</p>
               <button className="yp-btn" onClick={() => void call("cutover.begin").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("开始切换暂停")}</button>
+              <AcceptancePanel acceptance={activity?.acceptance} onChange={refreshActivity} onError={setMessage} />
             </details>}
             {page === "progress" && <div className="yp-progress-actions" ref={setProgressActions} />}
             <span className="yp-sync" role="status">

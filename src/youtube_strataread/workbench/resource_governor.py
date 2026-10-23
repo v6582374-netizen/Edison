@@ -5,8 +5,8 @@ workspace: recovery merely makes otherwise runnable work eligible for a slot.
 """
 import os
 import time
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 from youtube_strataread.workbench.content_session import ContentSessionError
 
@@ -30,6 +30,7 @@ class ResourceObservation:
     browser_unreclaimable: int
     browser_swap: int
     constrained: bool
+    browser_oom_kills: int | None = None
 
 
 class ResourceGovernor:
@@ -57,6 +58,12 @@ class ResourceGovernor:
             "available_bytes": sample.available,
             "browser_unreclaimable_bytes": sample.browser_unreclaimable,
             "browser_swap_bytes": sample.browser_swap,
+            "browser_oom_kills": sample.browser_oom_kills,
+            "constrained": sample.constrained,
+            "contract": {"browser_limit": BROWSER_LIMIT, "browser_high": BROWSER_HIGH,
+                         "browser_release": BROWSER_RELEASE, "swap_limit": 0,
+                         "start_available": START_AVAILABLE, "run_available": RUN_AVAILABLE,
+                         "cpu_quota": CPU_QUOTA, "cpu_period": CPU_PERIOD},
         }
 
     def browser_released(self):
@@ -113,7 +120,13 @@ class LinuxResources:
             stat = dict(line.split(" ", 1) for line in (group / "memory.stat").read_text().splitlines())
             memory = sum(int(stat[name]) for name in ("anon", "shmem", "kernel"))
             swap = int((group / "memory.swap.current").read_text())
-            return ResourceObservation(available, memory, swap, True)
+            # Evidence only: admission never depends on the OOM counter.
+            try:
+                events = dict(line.split(" ", 1) for line in (group / "memory.events").read_text().splitlines())
+                oom_kills = int(events.get("oom_kill", 0))
+            except (OSError, ValueError):
+                oom_kills = None
+            return ResourceObservation(available, memory, swap, True, oom_kills)
         except (OSError, ValueError, KeyError, StopIteration):
             return ResourceObservation(available, memory, swap, False)
 

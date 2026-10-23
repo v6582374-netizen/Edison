@@ -10,6 +10,7 @@ import { LaunchHero, type Milestone } from "./discovery/LaunchHero";
 import { activityLabels } from "./activityLabels";
 import { RawConsole } from "./RawConsole";
 import { DiscoveryStatus } from "./DiscoveryStatus";
+import { CapabilityHealth } from "./CapabilityHealth";
 import "./discovery/discovery.css";
 import "./discovery/hierarchy.css";
 import "./progress.css";
@@ -135,6 +136,7 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
         {stale ? yt("连接中断 · 正在重连") : activity?.cutover?.held ? yt("维护中 · 采集暂停") : live ? yt("后台在线") : yt("后台心跳未确认")}
       </span>
     </div>
+    <CapabilityHealth health={activity?.health} />
     <DiscoveryStatus discovery={activity?.discovery} paused={!!activity?.drain_paused} />
     <div className="discovery-stage-strip-layout-ma">
       <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live && !activity?.cutover?.held)} observedStage={title}

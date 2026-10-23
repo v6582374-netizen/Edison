@@ -16,6 +16,7 @@ from youtube_strataread.utils.process_lock import acquire_process_lock
 REQUEST_INTERVAL = 2.0
 VIDEO_INTERVAL = 15.0
 INITIAL_COOLDOWN = 15 * 60
+NETWORK_COOLDOWN = 10 * 60
 MAX_COOLDOWN = 6 * 60 * 60
 MAX_RATE_LIMIT_ATTEMPTS = 4
 _STATE_KEY = "youtube_request_policy"
@@ -245,7 +246,7 @@ class YouTubeRequestPolicy:
         return YouTubeRateLimited(until, recorded=True)
 
     def network_failed(self, reason: str, retry_at: float | None = None) -> float:
-        return self._record_failure(kind="network", streak="network_failures", initial_delay=600,
+        return self._record_failure(kind="network", streak="network_failures", initial_delay=NETWORK_COOLDOWN,
                                     reason=reason, retry_at=retry_at)
 
     def caption_succeeded(self, *, observed_sequence: int | None = None) -> None:

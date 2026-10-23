@@ -881,5 +881,13 @@
 .yp-maintenance p { margin: 8px 0; line-height: 1.6; }
 .yp-maintenance-tools { position: relative; font-size: var(--fs-ui); }
 .yp-maintenance-tools summary { cursor: pointer; white-space: nowrap; }
-.yp-maintenance-tools[open] { max-width: 300px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.yp-maintenance-tools[open] { max-width: 420px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.yp-acceptance { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.yp-acceptance p, .yp-acceptance li { margin: 4px 0; line-height: 1.5; }
+.yp-acceptance ul { margin: 6px 0; padding-left: 18px; }
+.yp-acceptance .yp-btn { margin: 6px 6px 0 0; }
+.yp-capability-wait { grid-column: 1 / -1; margin: 12px 28px 0; padding: 8px 12px; border-left: 2px solid var(--line-strong); background: var(--panel); font-size: 13px; color: var(--muted); }
+.yp-capability-alert { grid-column: 1 / -1; margin: 16px 28px 0; padding: 14px 18px; border: 1px solid #c98a2e; border-radius: 10px; background: color-mix(in srgb, #f3b54a 14%, var(--panel)); }
+.yp-capability-alert.attention { border-color: #b3423a; background: color-mix(in srgb, #b3423a 10%, var(--panel)); }
+.yp-capability-alert p { margin: 6px 0; line-height: 1.6; }
 .yp-maintenance-tools p { line-height: 1.5; }

@@ -44,7 +44,36 @@ export type DiscoveryState = {
   sources?: {channel_id: string; title: string; complete: number; error: string; coverage_reason: string;
     valid_from?: number | null; valid_until?: number | null}[];
 };
+export type Capability = {
+  state: string; fault: string | null; reason: string | null; next_check_at: number | null;
+  last_success_at: number | null; last_failure_at: number | null; since: number | null;
+};
+export type CapabilityNotice = {
+  level: "none" | "waiting" | "escalated" | "attention"; capability?: "subscriptions" | "captions";
+  category?: string; reason?: string | null; since?: number | null; next_check_at?: number | null;
+};
+export type Health = {
+  capabilities: { subscriptions: Capability; captions: Capability };
+  notice: CapabilityNotice;
+  maintenance: { state?: string; reason?: string | null; next_at?: number | null; used?: number; limit?: number;
+    last_started_at: number | null; last_ended_at: number | null; last_basis: string | null; last_result: string | null };
+  progress: { last_stage_at: number | null; last_ready_at: number | null };
+};
+export type AcceptancePeriod = {
+  state: "observing" | "passed" | "failed" | "unverified"; number: number; started_at: number; ended_at: number | null;
+  reason: string; elapsed_seconds: number; required_days: number; complete_days: number; missing_days: number[];
+  coverage: { key: string; label: string; covered: boolean }[]; missing: string[]; failures: string[];
+  security_verifications: { natural: number; limit: number; controlled: number };
+  interventions: { total: number; ordinary: number; by_reason: Record<string, number>; controlled: number };
+  controlled_events: number; natural_events: number;
+};
+export type Acceptance = {
+  state: "not_started" | AcceptancePeriod["state"]; current: AcceptancePeriod | null; history: AcceptancePeriod[];
+  drill: boolean; controlled_boundary: boolean;
+};
 export type Activity = {
+  health?: Health;
+  acceptance?: Acceptance;
   cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "aborted"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
     migration?: {stage: string; stage_label: string; finished: boolean; client_match: boolean | null; permission_error: boolean; identity_withdrawn: boolean;
       unknown: {video_id: string; title: string}[]}};

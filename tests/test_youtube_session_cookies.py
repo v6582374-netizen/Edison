@@ -55,6 +55,8 @@ def test_verified_cookie_replacement_retries_only_session_blocked_videos(monkeyp
     from test_workbench_library import candidate
 
     from coworker.server import youtube
+    from youtube_strataread.workbench.acceptance import AcceptanceRecord
+    from youtube_strataread.workbench.cutover import CutoverHold
     from youtube_strataread.workbench.workspace import LocalWorkspace
 
     workspace = LocalWorkspace.open(tmp_path / 'workspace')
@@ -64,6 +66,9 @@ def test_verified_cookie_replacement_retries_only_session_blocked_videos(monkeyp
     workspace.set_preparation_state('other00001', 'failed', 'unrelated failure')
     workbench = youtube.YouTubeWorkbench.__new__(youtube.YouTubeWorkbench)
     workbench.workspace = workspace
+    workbench.cutover = CutoverHold(workspace)
+    workbench.managed_content = False
+    workbench.acceptance = AcceptanceRecord(workspace)
     path = tmp_path / 'cookies.txt'
     monkeypatch.setattr(youtube, 'youtube_cookie_file', lambda: path)
     monkeypatch.setattr(session_cookies, 'replace', lambda *args: {'saved': True})
@@ -72,3 +77,7 @@ def test_verified_cookie_replacement_retries_only_session_blocked_videos(monkeyp
     assert result['result']['resumed'] == 1
     assert workspace.asset('blocked0001')['preparation_state'] == 'queued'
     assert workspace.asset('other00001')['preparation_state'] == 'failed'
+    # Moving cookies by hand is ordinary-maintenance labour in acceptance evidence.
+    moved = [event for event in workbench.acceptance.export()['events'] if event['kind'] == 'intervention']
+    assert [(event['detail']['reason'], event['detail']['ordinary']) for event in moved] == [('credential_move', True)]
+    assert 'valid' not in str(workbench.acceptance.export())
