@@ -1,6 +1,6 @@
 # YouTube 一致性备份、恢复与程序回退
 
-本文说明 #57 交付的维护动作。决策依据见 ADR 0018、ADR 0019 与[迁移决策](https://github.com/v6582374-netizen/Edison/issues/46#issuecomment-6258668775)。
+本文说明[YouTube：一致性备份与保留最新数据的恢复演练](https://github.com/v6582374-netizen/Edison/issues/57)交付的维护动作。决策依据见 ADR 0018、ADR 0019 与[迁移决策](https://github.com/v6582374-netizen/Edison/issues/46#issuecomment-6258668775)。
 
 ## 两种动作，不可互换
 
