@@ -273,3 +273,14 @@ and process-group tests still run. A skip is missing evidence, not acceptance.
 The Web E2E verifies native keyboard clipboard paste
 in Chromium; WebKit runs the other content-session scenarios without claiming
 clipboard coverage.
+
+The access/maintenance integration test uses a built Web bundle, actual HTTPS
+and the real fixed-duration Edison login. Run `npm run build` and
+`npx playwright test -c playwright.web-auth.config.ts` from `surfaces/gui`.
+It crosses the exact 24-hour boundary while the real host queue maintains a
+controlled content session and composes an explicitly requested manuscript.
+Protected access becomes 401; after re-login, reading records, cancellation and
+Auto Update remain unchanged. A test proxy exercises the actual forward-auth
+HTTP check using Caddy's contract; it does not run production Caddy. Google,
+YouTube, models and time are controlled, so this is neither natural rotation
+evidence nor production migration or host-reboot acceptance.
