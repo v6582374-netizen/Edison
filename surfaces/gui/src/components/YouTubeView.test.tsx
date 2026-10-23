@@ -337,3 +337,35 @@ it("shows the historical migration stage and items that still need review", asyn
   fireEvent.click(screen.getByRole("button", {name: "执行历史迁移"}));
   await waitFor(() => expect(call).toHaveBeenCalledWith("cutover.migrate"));
 });
+
+it("takes a consistent backup and shows its restore verification without credentials", async () => {
+  const implementation = call.getMockImplementation()!;
+  let backup: unknown = null;
+  call.mockImplementation(async (capability, args) => {
+    if (capability === "activity.snapshot") return {...activity, cutover: {held: true, state: "ready", reason: "", backup}};
+    if (capability === "cutover.backup") {
+      backup = {created_at: 1800000000, verified: true, translations: 2,
+        summary: {documents: 2, manuscript_versions: 3, transcripts: 2}};
+      return {};
+    }
+    return implementation(capability, args);
+  });
+  render(<YouTubeView onModelSettings={() => {}} onTranslationSettings={() => {}} />);
+  const region = await screen.findByRole("region", {name: "YouTube 切换暂停"});
+  expect(region.textContent).toContain("尚无一致性备份");
+  fireEvent.click(within(region).getByRole("button", {name: "取得一致性备份并验证恢复"}));
+  await waitFor(() => expect(region.textContent).toContain("一致性备份已通过恢复验证"));
+  expect(region.textContent).toContain("文稿 2 篇 · 版本 3 个 · 字幕 2 份 · 完整译文 2 份");
+  expect(region.textContent).toContain("认证资料单独管理，未进入备份。");
+});
+
+it("shows an older program as read-only without maintenance actions", async () => {
+  const implementation = call.getMockImplementation()!;
+  call.mockImplementation(async (capability, args) => capability === "activity.snapshot"
+    ? {...activity, cutover: {held: true, state: "incompatible", reason: "资料库由更新的程序写入；本程序只提供阅读，采集与连接变更保持暂停。"}}
+    : implementation(capability, args));
+  render(<YouTubeView onModelSettings={() => {}} onTranslationSettings={() => {}} />);
+  const region = await screen.findByRole("region", {name: "YouTube 切换暂停"});
+  expect(region.textContent).toContain("程序与资料不兼容 · 只读阅读");
+  expect(within(region).queryByRole("button")).toBeNull();
+});

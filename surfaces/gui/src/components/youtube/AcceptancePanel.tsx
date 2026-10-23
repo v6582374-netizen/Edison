@@ -49,6 +49,7 @@ export function AcceptancePanel({ acceptance, onChange, onError }: {
   const active = acceptance.current && acceptance.current.ended_at === null;
   return <section className="yp-acceptance" aria-label={yt("持续验收")}>
     <strong role="status">{yt("持续验收：{{state}}", { state: yt(labels[acceptance.state]) })}</strong>
+    {acceptance.reason && <p>{yt(acceptance.reason)}</p>}
     {acceptance.controlled_boundary && <p>{yt("本实例的外部服务为受控替身，全部证据按受控记账，不能证明自然事件。")}</p>}
     {acceptance.drill && <p>{yt("故障演练进行中：期间事件单独记账。")}</p>}
     {acceptance.current ? <Period period={acceptance.current} /> : <p>{yt("正式路径检查通过后开始；日历天数本身不会判定通过。")}</p>}

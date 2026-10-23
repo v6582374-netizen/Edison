@@ -464,14 +464,22 @@ class AcceptanceRecord:
         now = self._now()
         capabilities = self.capabilities(subscription=subscription, content=content, requests=requests,
                                          gate=gate, now=now)
-        with self._connect() as connection:
-            last_stage, last_ready = connection.execute(
-                "SELECT MAX(occurred_at), MAX(CASE WHEN stage = 'ready' THEN occurred_at END) FROM preparation_events"
-            ).fetchone()
-            maintenance = connection.execute(
-                "SELECT occurred_at, detail FROM youtube_evidence WHERE kind = 'maintenance' "
-                "AND json_extract(detail, '$.phase') IN ('started', 'ended') ORDER BY sequence DESC LIMIT 2"
-            ).fetchall()
+        last_stage = last_ready = None
+        maintenance = []
+        if not self.workspace.newer_data_contract:
+            try:
+                with self._connect() as connection:
+                    last_stage, last_ready = connection.execute(
+                        "SELECT MAX(occurred_at), MAX(CASE WHEN stage = 'ready' THEN occurred_at END) FROM preparation_events"
+                    ).fetchone()
+                    maintenance = connection.execute(
+                        "SELECT occurred_at, detail FROM youtube_evidence WHERE kind = 'maintenance' "
+                        "AND json_extract(detail, '$.phase') IN ('started', 'ended') ORDER BY sequence DESC LIMIT 2"
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                # A rollback reader must not create old evidence tables in a
+                # newer library, or break document reading when they are absent.
+                pass
         windows = [dict(json.loads(detail), at=at) for at, detail in maintenance]
         last = next((item for item in windows if item["phase"] == "started"), None)
         ended = next((item for item in windows if item["phase"] == "ended"), None)
@@ -587,6 +595,10 @@ class AcceptanceRecord:
         }
 
     def status(self) -> dict:
+        if self.workspace.newer_data_contract:
+            return {"state": "unverified", "current": None, "history": [], "drill": False,
+                    "controlled_boundary": os.environ.get(CONTROLLED_ENV) == "1",
+                    "reason": "资料库由更新的程序写入；持续验收证据仅由兼容程序解读，当前尚未验证。"}
         state = self._state()
         periods = state["periods"]
         drill = self.workspace.meta(_DRILL) == "1"
@@ -605,5 +617,7 @@ class AcceptanceRecord:
                 "drill": drill, "controlled_boundary": controlled}
 
     def export(self) -> dict:
+        if self.workspace.newer_data_contract:
+            return {"generated_at": self._now(), "status": self.status(), "periods": [], "events": []}
         return {"generated_at": self._now(), "status": self.status(), "periods": self._state()["periods"],
                 "events": self._events(0)}

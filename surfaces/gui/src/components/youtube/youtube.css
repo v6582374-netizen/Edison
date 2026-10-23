@@ -821,6 +821,8 @@
   overflow: hidden;
   padding-bottom: 0;
 }
+/* The maintenance region takes its own row so the list keeps the flexible one. */
+.yp-documents:has(> .yp-maintenance) { grid-template-rows: auto auto minmax(0, 1fr); }
 .yp-documents > .yp-head { grid-column: 1 / -1; padding: 18px 28px 0; border-bottom: 1px solid var(--line); }
 .yp-documents .yp-subline { margin: 8px 0 12px; }
 .yp-documents .yp-filterbar { border: 0; padding-bottom: 12px; }
@@ -859,6 +861,7 @@
   .yp-documents { grid-template-columns: minmax(0, 1fr); }
   .yp-documents > .yp-head { padding: 16px 20px 0; }
   .yp-documents .yp-inspector { grid-column: 1; grid-row: 2; border-left: 0; }
+  .yp-documents:has(> .yp-maintenance) .yp-inspector { grid-row: 3; }
   .yp-documents .yp-inspector:has(.yp-inspector-placeholder) { display: none; }
   .yp-documents:has(.yp-inspector-footer) > .yp-content { display: none; }
 }

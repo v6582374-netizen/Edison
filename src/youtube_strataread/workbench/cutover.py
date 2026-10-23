@@ -2,6 +2,8 @@
 
 A hold never snapshots execution permissions. In-flight work retains its lease
 until its caller returns after saving results; withdrawal remains admissible.
+A library written by a newer program holds this program the same way without
+a durable record: reading continues and acquisition stays stopped.
 """
 from __future__ import annotations
 
@@ -30,18 +32,36 @@ class CutoverHold:
         self._drain_failed = False
         self._generation = 0
         self._monotonic_deadline = None
+        self._incompatible = _incompatible_reason(workspace)
         self._state = json.loads(workspace.meta("youtube_cutover") or '{"held":false,"state":"idle"}')
-        if self._state.get("held"):
-            self._state.update(state="aborted", reason="服务重启已中止切换；保留最新资料，采集继续暂停。", drained=False)
+        if self._state.get("held") and not self._incompatible:
+            self._state.update(state="aborted", drained=False)
+            if not self._state.get("restored_from"):  # A restore notice outlives restarts.
+                self._state["reason"] = "服务重启已中止切换；保留最新资料，采集继续暂停。"
             self._save()
 
     def _save(self):
+        if self._incompatible:
+            return  # Never reinterpret a newer program's durable cutover record.
         self.workspace.set_meta("youtube_cutover", json.dumps(self._state, ensure_ascii=False))
 
     @property
     def held(self):
         with self._lock:
-            return bool(self._state.get("held"))
+            return bool(self._state.get("held")) or self._incompatible is not None
+
+    @property
+    def incompatible(self):
+        return self._incompatible
+
+    def quiescent(self):
+        """The admission generation while a durable hold has proven every writer stopped."""
+        with self._lock:
+            status = self.status()
+            if (self._state.get("held") and status["drained"] and not self._drain_closing
+                    and not self._drain_failed and not self._incompatible):
+                return self._generation
+            return None
 
     @contextmanager
     def work(self, *, withdrawal=False):
@@ -49,10 +69,12 @@ class CutoverHold:
             depth = getattr(self._local, "depth", 0)
             if not depth and self._closing:
                 raise CutoverBlocked("This server has retired; refresh the page.")
+            if not depth and self._incompatible and not withdrawal:
+                raise CutoverBlocked(self._incompatible)
             if not depth and self.held and not withdrawal:
                 raise CutoverBlocked("YouTube 切换暂停中；新处理与连接变更暂不可用，已有资料仍可阅读。")
             if not depth:
-                if self.held and self._state.get("drained"):
+                if self._state.get("held") and self._state.get("drained"):
                     previous = self._state.copy()
                     self._state["drained"] = False
                     if self._state["state"] != "aborted":
@@ -85,7 +107,7 @@ class CutoverHold:
 
     def begin(self, stop):
         with self._lock:
-            if not self.held:
+            if not self._state.get("held"):
                 now = self.workspace.now()
                 previous = self._state
                 self._state = dict(held=True, state="draining", started_at=now,
@@ -103,25 +125,30 @@ class CutoverHold:
 
     def abort(self):
         with self._lock:
-            if self.held and self._state["state"] != "aborted":
+            if self._state.get("held") and self._state["state"] != "aborted":
                 self._state.update(state="aborted", reason="维护者已中止切换；保留最新资料，采集继续暂停。")
                 self._save()
             return self.status()
 
     def status(self):
         with self._lock:
-            expired = self.held and (self.workspace.now() >= self._state["deadline_at"]
+            expired = self._state.get("held") and (self.workspace.now() >= self._state["deadline_at"]
                 or (self._monotonic_deadline is not None and time.monotonic() >= self._monotonic_deadline))
             if expired and self._state["state"] != "aborted":
                 self._state.update(state="aborted", reason="30 分钟内未完成安全收尾与正式验证，已中止切换；在途工作继续保存，采集保持暂停。")
                 self._save()
-            return {**self._state, "active_requests": self._active,
-                    "drained": bool(self._state.get("drained")) and self._active == 0}
+            status = {**self._state, "active_requests": self._active,
+                      "drained": bool(self._state.get("drained")) and self._active == 0}
+            if self._incompatible:
+                library, program = self.workspace.newer_data_contract
+                status.update(held=True, state="incompatible", reason=self._incompatible, drained=False,
+                              library_contract=library, program_contract=program)
+            return status
 
     def observe_drain(self, threads, close_browser):
         with self._lock:
             state = self.status()
-            if (not self.held or self._active or self._drain_closing or self._drain_failed
+            if (not self._state.get("held") or self._active or self._drain_closing or self._drain_failed
                     or self._state.get("drained") or any(thread.is_alive() for thread in threads)):
                 return state
             self._drain_closing = True
@@ -171,6 +198,14 @@ def admitted(workspace):
         with hold.work():
             yield
     else:
+        if reason := _incompatible_reason(workspace):
+            raise CutoverBlocked(reason)
         if json.loads(workspace.meta("youtube_cutover") or "{}").get("held"):
             raise CutoverBlocked("YouTube 切换暂停中；新处理与连接变更暂不可用。")
         yield
+
+
+def _incompatible_reason(workspace):
+    if not getattr(workspace, "newer_data_contract", None):
+        return None
+    return "资料库由更新的程序写入；本程序只提供阅读，采集与连接变更保持暂停。"
