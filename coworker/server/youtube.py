@@ -430,7 +430,7 @@ class YouTubeWorkbench:
         witnessed = {"content_session.open", "content_session.confirm", "content_session.verify",
                      "connection.import_authorization", "activity.retry", "activity.retry_all_failed",
                      "manual.retry", "session_cookies.replace", "connection.disconnect", "cutover.begin"}
-        if capability not in witnessed:
+        if capability not in witnessed or self.cutover.incompatible:
             return self._admitted_dispatch(capability, arguments)
         try:
             with self.cutover.work(withdrawal=capability in {"connection.disconnect", "cutover.begin"}):
