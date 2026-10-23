@@ -162,6 +162,15 @@ class ContentSession:
     def _save(self):
         self._atomic(self.root / "state.json", json.dumps(self._state))
 
+    def read_only_status(self):
+        """Read the generation marker without claiming, repairing or verifying a session."""
+        try:
+            generation = json.loads((self.root / "state.json").read_text()).get("generation")
+        except (OSError, ValueError, AttributeError):
+            generation = None
+        return {"state": "unverified", "maintenance": {},
+                "generation": generation if type(generation) is int and generation >= 0 else None}
+
     def status(self):
         with self._lock:
             self._claim()

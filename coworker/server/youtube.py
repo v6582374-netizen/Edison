@@ -274,7 +274,7 @@ class YouTubeWorkbench:
         if self.cutover.incompatible:
             # Even status() claims and repairs the profile. An older program
             # cannot interpret or repair a newer connection's durable state.
-            return {"state": "unverified", "reason": self.cutover.incompatible, "maintenance": {}}
+            return {**self.content_session.read_only_status(), "reason": self.cutover.incompatible}
         from youtube_strataread.workbench.content_session import ContentSessionError
         try:
             return self.content_session.status()
