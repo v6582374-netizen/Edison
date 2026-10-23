@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
 root = Path(sys.argv[1])
 measurement = len(sys.argv) > 2 and sys.argv[2] == "native-measurement"
+web_login = len(sys.argv) > 2 and sys.argv[2] == "web-auth"
 if measurement:
     (root / "measurement").touch()
 os.environ.update(COWORKER_STATE_DIR=str(root / 'host'), COWORKER_API_TOKEN='content-e2e',
@@ -21,6 +22,11 @@ os.environ.update(COWORKER_STATE_DIR=str(root / 'host'), COWORKER_API_TOKEN='con
     EDISON_CREDENTIAL_FILE=str(root / 'credentials.json'),
     # Every Google/YouTube response here is a substitute: evidence is controlled.
     EDISON_ACCEPTANCE_CONTROLLED='1')
+if web_login:
+    import bcrypt
+    (root / 'password.hash').write_bytes(bcrypt.hashpw(b'isolated-access-secret', bcrypt.gensalt(rounds=4)))
+    os.environ.update(EDISON_WEB_LOGIN='1', EDISON_WEB_USERNAME='owner',
+                      EDISON_WEB_PASSWORD_HASH_FILE=str(root / 'password.hash'))
 sys.path.insert(0, str(Path.cwd() / 'tests'))
 import uvicorn
 from shorts_fixture import player_page
@@ -44,6 +50,9 @@ def now():
         return time.time()
     return float((root / 'clock').read_text())
 workspace.time = manual.time = discovery.time = SimpleNamespace(time=now)
+if web_login:
+    from coworker.server import web_auth
+    web_auth.time = SimpleNamespace(time=now, monotonic=now)
 if os.environ.get('EDISON_E2E_DATA_CONTRACT'):
     # Stands in for a program built against another library data contract.
     workspace.YOUTUBE_DATA_CONTRACT = int(os.environ['EDISON_E2E_DATA_CONTRACT'])
@@ -202,8 +211,15 @@ if measurement:
                 "resources":ResourceGovernor().status(),
                 "model_calls":len((root/'model-calls.jsonl').read_text().splitlines()) if (root/'model-calls.jsonl').exists() else 0}
 print(json.dumps({'port':sock.getsockname()[1]}),flush=True)
+tls = {}
+if web_login:
+    from fastapi.staticfiles import StaticFiles
+    # Serve this checkout's built Web bundle over actual HTTPS, so secure
+    # cookies, the real login form and same-origin expiry redirect are exercised.
+    app.mount('/', StaticFiles(directory='surfaces/gui/dist', html=True), name='isolated-web')
+    tls = {'ssl_keyfile': str(root / 'key.pem'), 'ssl_certfile': str(root / 'cert.pem')}
 try:
-    uvicorn.Server(uvicorn.Config(app,log_level='error')).run(sockets=[sock])
+    uvicorn.Server(uvicorn.Config(app,log_level='error', **tls)).run(sockets=[sock])
 finally:
     if native:
         native.close()
