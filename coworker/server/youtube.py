@@ -38,6 +38,7 @@ from youtube_strataread.workbench.library import (
     YtDlpCaptions,
 )
 from youtube_strataread.workbench.migration import HistoricalMigration
+from youtube_strataread.workbench.recovery import LibraryBackup
 from youtube_strataread.workbench.sidecar import handle_request
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
@@ -139,9 +140,17 @@ class YouTubeWorkbench:
         self.content_session = ContentSession(content_root, resources=self.resources,
                                               requests=self.workspace.youtube_requests,
                                               unattended=self.managed_content)
+        # Knowledge backups live beside, never inside, the library; credentials
+        # and the content profile are managed separately and never copied.
+        credential_file = os.environ.get("EDISON_CREDENTIAL_FILE")
+        self.backup = LibraryBackup(
+            self.workspace, self.cutover,
+            Path(os.environ.get("EDISON_YOUTUBE_BACKUP_DIR", str(root.parent / "youtube-backups"))).expanduser(),
+            separately_managed=[content_root, *([Path(credential_file)] if credential_file else [])])
         if self.managed_content:
             self.connection.resume_disconnection(clear_content=self.content_session.clear)
-        self.workspace.recover_interrupted_preparations()
+        if not self.cutover.incompatible:
+            self.workspace.recover_interrupted_preparations()
         from youtube_strataread.workbench.manual import ManualVideoRequests
         self.manual = ManualVideoRequests(self.workspace, self.connection)
         self.discovery = SubscriptionDiscovery(
@@ -292,10 +301,14 @@ class YouTubeWorkbench:
     def _cutover_status(self) -> dict[str, Any]:
         status = self.cutover.status()
         status["migration"] = self.migration.status()
+        status["backup"] = self.backup.status()
         return status
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if capability.startswith("cutover."):
+            if self.cutover.incompatible and capability != "cutover.status":
+                # An older program never migrates or backs up a newer library.
+                return {"ok": False, "kind": "cutover_hold", "error": self.cutover.incompatible}
             if capability == "cutover.begin":
                 self.cutover.begin(self.stop)
                 return {"ok": True, "result": self._cutover_status()}
@@ -314,6 +327,16 @@ class YouTubeWorkbench:
                 except OSError:
                     return {"ok": False, "error": "历史迁移没有完成，可在切换暂停内再次执行。"}
                 return {"ok": True, "result": {**self._cutover_status(), "migration": migrated}}
+            if capability == "cutover.backup":
+                try:
+                    self.backup.run()
+                except CutoverBlocked as error:
+                    return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+                except ValueError as error:
+                    return {"ok": False, "error": str(error)}
+                except (OSError, sqlite3.Error):
+                    return {"ok": False, "error": "一致性备份没有完成，请检查备份目录后在切换暂停内重试。"}
+                return {"ok": True, "result": self._cutover_status()}
             return {"ok": False, "error": "不支持的切换操作。"}
         # Reads and the person's newer withdrawals/permission choices remain
         # available. Everything that can start work or write credentials joins

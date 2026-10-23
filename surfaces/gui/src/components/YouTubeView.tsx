@@ -394,17 +394,25 @@ export function YouTubeView({
     <main ref={mainRef} tabIndex={-1} {...modal.capture} className={`yp-main${page === "documents" ? " yp-documents" : ""}`} aria-label={yt("YouTube 资料库")}>
       <NoticeStack messages={[message, progressMessage, panel ? "" : panelMessage, activity?.discovery_error || ""].map(value => value ? yt(value) : "")} />
       {activity?.cutover?.held && <section aria-label={yt("YouTube 切换暂停")} className="yp-maintenance" role="region">
-        <strong>{yt(activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
+        <strong>{yt(activity.cutover.state === "incompatible" ? "程序与资料不兼容 · 只读阅读" : activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
         <p>{yt(activity.cutover.reason || "")}</p>
         <p>{yt("Auto Update 的选择与已接收请求保持不变；仍可阅读、取消处理或断开 YouTube。")}</p>
+        {activity.cutover.state !== "incompatible" && <>
         <p>{yt(activity.cutover.migration?.stage_label || "尚未迁移")}</p>
         {(activity.cutover.migration?.unknown.length ?? 0) > 0 && <>
           <p>{yt("待核对 {{count}} 项", {count: activity.cutover.migration?.unknown.length})}</p>
           <ul>{activity.cutover.migration?.unknown.map(item => <li key={item.video_id}>{item.title}</li>)}</ul>
         </>}
         {activity.cutover.state !== "aborted" && activity.cutover.deadline_at && <p>{yt("本次尝试截止：{{deadline}}", {deadline: new Date(activity.cutover.deadline_at * 1000).toLocaleString()})}</p>}
+        {activity.cutover.backup ? <>
+          <p role={activity.cutover.backup.verified ? undefined : "alert"}>{yt(activity.cutover.backup.verified ? "一致性备份已通过恢复验证：{{time}}" : "一致性备份未通过恢复验证：{{time}}", {time: new Date(activity.cutover.backup.created_at * 1000).toLocaleString()})}</p>
+          <p>{yt("文稿 {{documents}} 篇 · 版本 {{versions}} 个 · 字幕 {{transcripts}} 份 · 完整译文 {{translations}} 份", {documents: activity.cutover.backup.summary.documents, versions: activity.cutover.backup.summary.manuscript_versions, transcripts: activity.cutover.backup.summary.transcripts, translations: activity.cutover.backup.translations})}</p>
+          <p>{yt("认证资料单独管理，未进入备份。")}</p>
+        </> : <p>{yt("尚无一致性备份")}</p>}
         <button className="yp-btn" onClick={() => void call("cutover.migrate").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("执行历史迁移")}</button>
+        <button className="yp-btn" onClick={() => void call("cutover.backup").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("取得一致性备份并验证恢复")}</button>
         {activity.cutover.state !== "aborted" && <button className="yp-btn" onClick={() => void call("cutover.abort").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("中止切换并保持采集暂停")}</button>}
+        </>}
       </section>}
       <header className="yp-head">
         <div className="yp-header">

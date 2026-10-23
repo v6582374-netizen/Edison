@@ -45,7 +45,9 @@ export type DiscoveryState = {
     valid_from?: number | null; valid_until?: number | null}[];
 };
 export type Activity = {
-  cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "aborted"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
+  cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "aborted" | "incompatible"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
+    backup?: {created_at: number; verified: boolean; translations: number;
+      summary: {documents: number; manuscript_versions: number; transcripts: number}} | null;
     migration?: {stage: string; stage_label: string; finished: boolean; client_match: boolean | null; permission_error: boolean; identity_withdrawn: boolean;
       unknown: {video_id: string; title: string}[]}};
   discovery?: DiscoveryState;

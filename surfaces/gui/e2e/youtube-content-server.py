@@ -40,6 +40,9 @@ def now():
         return time.time()
     return float((root / 'clock').read_text())
 workspace.time = manual.time = discovery.time = SimpleNamespace(time=now)
+if os.environ.get('EDISON_E2E_DATA_CONTRACT'):
+    # Stands in for a program built against another library data contract.
+    workspace.YOUTUBE_DATA_CONTRACT = int(os.environ['EDISON_E2E_DATA_CONTRACT'])
 content_session.time = SimpleNamespace(time=now)
 original_session_init = content_session.ContentSession.__init__
 def session_init(self, *args, **kwargs):
