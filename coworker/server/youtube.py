@@ -149,7 +149,7 @@ class YouTubeWorkbench:
             self.workspace, self.cutover,
             Path(os.environ.get("EDISON_YOUTUBE_BACKUP_DIR", str(root.parent / "youtube-backups"))).expanduser(),
             separately_managed=[content_root, *([Path(credential_file)] if credential_file else [])])
-        if self.managed_content:
+        if self.managed_content and not self.cutover.incompatible:
             self.connection.resume_disconnection(clear_content=self.content_session.clear)
         self.acceptance = AcceptanceRecord(self.workspace)
         self._last_evidence_inputs = None
@@ -207,7 +207,7 @@ class YouTubeWorkbench:
 
     def _watch_cutover(self):
         while not self.maintenance_stop.wait(.2):
-            if self.cutover.held:
+            if self.cutover.held and not self.cutover.incompatible:
                 self.cutover.observe_drain(self._workers(), self.content_session.close_browser)
 
     def _sync_subscriptions(self) -> None:
@@ -271,6 +271,10 @@ class YouTubeWorkbench:
     def _content_status(self) -> dict[str, Any] | None:
         if not self.managed_content:
             return None
+        if self.cutover.incompatible:
+            # Even status() claims and repairs the profile. An older program
+            # cannot interpret or repair a newer connection's durable state.
+            return {"state": "unverified", "reason": self.cutover.incompatible, "maintenance": {}}
         from youtube_strataread.workbench.content_session import ContentSessionError
         try:
             return self.content_session.status()
@@ -489,6 +493,8 @@ class YouTubeWorkbench:
         withdrawal = {"content_session.status", "content_session.close", "connection.disconnect", "activity.cancel", "activity.drain_pause",
                       "activity.resume", "collection.set_exclusions", "library.set_reading_state", "library.delete"}
         try:
+            if self.cutover.incompatible and capability in {"connection.disconnect", "content_session.close"}:
+                raise CutoverBlocked(self.cutover.incompatible)
             if capability in reads:
                 return self._dispatch(capability, arguments)
             with self.cutover.work(withdrawal=capability in withdrawal):
@@ -513,7 +519,7 @@ class YouTubeWorkbench:
             try:
                 operation = capability.split(".", 1)[1]
                 if operation == "status":
-                    result = self.content_session.status()
+                    result = self._content_status() if self.managed_content else self.content_session.status()
                 elif not self.managed_content:
                     raise ContentSessionError("maintenance", "请先配置稳定的服务器内容会话目录并完成资源准入。")
                 elif operation == "open":

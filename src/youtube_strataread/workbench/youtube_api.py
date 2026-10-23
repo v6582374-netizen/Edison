@@ -64,7 +64,7 @@ class YouTubeDataAPI:
         self._lock = threading.RLock()
         self.daily_budget = max(1, int(os.environ.get('EDISON_YOUTUBE_API_DAILY_BUDGET', '10000')))
         self._gate: dict[str, Any] = {}
-        if workspace:
+        if workspace and not workspace.newer_data_contract:
             with sqlite3.connect(workspace.database_path) as db:
                 db.execute('''CREATE TABLE IF NOT EXISTS youtube_api_usage (
                     day TEXT NOT NULL, endpoint TEXT NOT NULL, requests INTEGER NOT NULL,
@@ -175,7 +175,7 @@ class YouTubeDataAPI:
     def snapshot(self, *, channels: int, subscriptions: int) -> dict[str, Any]:
         day, reset_at = self._day()
         counts: dict[str, int] = {}
-        if self.workspace:
+        if self.workspace and not self.workspace.newer_data_contract:
             with sqlite3.connect(self.workspace.database_path) as db:
                 counts = dict(db.execute('SELECT endpoint,requests FROM youtube_api_usage WHERE day=?', (day,)))
         polls = 86400 // POLL_SECONDS
