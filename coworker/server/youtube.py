@@ -518,7 +518,9 @@ class YouTubeWorkbench:
             from youtube_strataread.workbench.content_session import ContentSessionError
             try:
                 operation = capability.split(".", 1)[1]
-                if operation == "status":
+                if operation == "status" and self.cutover.incompatible:
+                    result = {**self.content_session.read_only_status(), "reason": self.cutover.incompatible}
+                elif operation == "status":
                     result = self._content_status() if self.managed_content else self.content_session.status()
                 elif not self.managed_content:
                     raise ContentSessionError("maintenance", "请先配置稳定的服务器内容会话目录并完成资源准入。")

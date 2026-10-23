@@ -26,8 +26,12 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("cleanup", ["pending", "failed"])
-def test_incompatible_web_start_and_status_reads_preserve_connection_storage(tmp_path, monkeypatch, cleanup):
+@pytest.mark.parametrize("managed_content", [True, False])
+def test_incompatible_web_start_and_status_reads_preserve_connection_storage(
+    tmp_path, monkeypatch, cleanup, managed_content,
+):
     from fastapi.testclient import TestClient
+
     from coworker.server import SessionManager, create_app
 
     library = LocalWorkspace.open(tmp_path / "library")
@@ -41,14 +45,19 @@ def test_incompatible_web_start_and_status_reads_preserve_connection_storage(tmp
     credentials = tmp_path / "credentials.json"
     credentials.write_text('{"preserved":"synthetic-current-credential"}')
     credentials.chmod(0o600)
-    content = tmp_path / "content"
+    content = tmp_path / "content" if managed_content else library.root.parent / "youtube-content-session"
     if cleanup == "failed":
         content.mkdir()
         (content / "state.json").write_text('{"generation":7,"disconnected":true,"maintenance_started_at":123}')
         (content / "current.cookies").write_text("synthetic-current-session")
-    content_before = {path.name: path.read_bytes() for path in content.glob("*")}
+    content_before = {str(path.relative_to(content)): path.read_bytes() if path.is_file() else None
+                      for path in content.rglob("*")}
+    content_mode = content.stat().st_mode if content.exists() else None
     monkeypatch.setenv("YOUTUBE_WORKBENCH_WORKSPACE", str(library.root))
-    monkeypatch.setenv("EDISON_CONTENT_SESSION_DIR", str(content))
+    if managed_content:
+        monkeypatch.setenv("EDISON_CONTENT_SESSION_DIR", str(content))
+    else:
+        monkeypatch.delenv("EDISON_CONTENT_SESSION_DIR", raising=False)
     monkeypatch.setenv("EDISON_CREDENTIAL_FILE", str(credentials))
     monkeypatch.setenv("COWORKER_API_TOKEN", "incompatible-test")
     app = create_app(SessionManager(data_dir=tmp_path / "host"))
@@ -57,9 +66,14 @@ def test_incompatible_web_start_and_status_reads_preserve_connection_storage(tmp
             for capability in ("connection.status", "activity.snapshot", "content_session.status", "acceptance.status"):
                 response = client.post("/v1/youtube/capability", json={"capability": capability}).json()
                 assert response["ok"], response
+                if capability == "content_session.status":
+                    assert response["result"]["state"] == "unverified"
+                    assert response["result"]["generation"] == (7 if cleanup == "failed" else None)
             assert library_facts(library.database_path, library.root) == before
             assert credentials.read_text() == '{"preserved":"synthetic-current-credential"}'
-            assert {path.name: path.read_bytes() for path in content.glob("*")} == content_before
+            assert {str(path.relative_to(content)): path.read_bytes() if path.is_file() else None
+                    for path in content.rglob("*")} == content_before
+            assert (content.stat().st_mode if content.exists() else None) == content_mode
             if cleanup == "pending":
                 assert not content.exists()
     finally:
