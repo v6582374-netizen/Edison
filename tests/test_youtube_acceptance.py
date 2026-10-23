@@ -254,6 +254,22 @@ def test_same_package_version_builds_have_distinct_source_identities_and_rollbac
     assert record.status()["current"]["reason"] == "Edison 程序回退"
 
 
+def test_newer_library_without_the_old_evidence_table_keeps_health_and_export_readable(record):
+    import sqlite3
+    record.begin()
+    # A fixture representing a future program's durable schema. An older
+    # reader may neither recreate this removed table nor interpret its ledger.
+    record.workspace.set_meta("youtube_data_contract", str(workspace_module.YOUTUBE_DATA_CONTRACT + 1))
+    with sqlite3.connect(record.workspace.database_path) as connection:
+        connection.execute("DROP TABLE youtube_evidence")
+    older = AcceptanceRecord(LocalWorkspace.open(record.workspace.root))
+    assert older.status()["state"] == "unverified"
+    assert "兼容程序" in older.status()["reason"]
+    assert older.health(subscription={}, content=None, requests={}, gate={})["progress"] == {
+        "last_stage_at": None, "last_ready_at": None}
+    assert older.export()["events"] == []
+
+
 def test_evidence_outlives_the_console_and_asset_deletion_without_secrets(record, clock):
     from test_workbench_library import candidate
     workspace = record.workspace
