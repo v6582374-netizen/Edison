@@ -366,6 +366,9 @@ for (const fault of ['network','rate']) test(`shared caption recovery ${fault} s
       await app.clock(deadline);
       await expect.poll(async()=>(await calls()).length).toBe(count+1);
     }
+    // The external request log precedes the host's failure transaction. Crash
+    // only after this failure is durably waiting, rather than racing its write.
+    await expect.poll(async () => (await app.call('activity.snapshot')).youtube_requests.cooldown_until).toBe(deadline+21600);
     await app.stop(fault === 'network' ? 'SIGTERM' : 'SIGKILL');await app.start();
     const state=await app.call('activity.snapshot');
     expect(state.youtube_requests.cooldown_until).toBe(deadline+21600);

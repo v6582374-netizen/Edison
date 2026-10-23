@@ -352,6 +352,15 @@ class AcceptanceRecord:
                                          gate=gate, now=now)
         for name, item in capabilities.items():
             previous = observed.get(name, {})
+            unresolved = previous.get("unresolved")
+            if not unresolved and previous.get("fault"):
+                # Preserve an episode sampled before this accounting field was
+                # introduced, including its last known successful acquisition.
+                unresolved = {"category": previous["fault"], "since": previous.get("since"),
+                              "success_before": previous.get("success"), "failed_at": previous.get("failure")}
+            if item["fault"]:
+                unresolved = {"category": item["fault"], "since": item["since"],
+                              "success_before": item["last_success_at"], "failed_at": item["last_failure_at"]}
             if item["last_success_at"] and item["last_success_at"] != previous.get("success"):
                 self.record("capability", name, at=item["last_success_at"], outcome="success")
             if item["last_failure_at"] and item["last_failure_at"] != previous.get("failure"):
@@ -362,11 +371,20 @@ class AcceptanceRecord:
                 self.record("fault", name, outcome="started" if not previous.get("fault") else "changed",
                             category=item["fault"], reason=item["reason"], since=item["since"],
                             next_check_at=item["next_check_at"])
-            elif previous.get("fault") and not item["fault"]:
-                self.record("fault", name, outcome="recovered", category=previous["fault"],
-                            since=previous.get("since"), duration=now - (previous.get("since") or now))
+            elif unresolved:
+                success = item["last_success_at"]
+                if item["state"] == "disconnected":
+                    self.record("fault", name, outcome="withdrawn", category=unresolved["category"])
+                    unresolved = None
+                elif (success is not None and success > (unresolved.get("success_before") or 0)
+                      and success >= (unresolved.get("failed_at") or unresolved["since"] or 0)):
+                    since = unresolved["since"]
+                    self.record("fault", name, outcome="recovered", category=unresolved["category"],
+                                since=since, duration=now - (since if since is not None else now))
+                    unresolved = None
             observed[name] = {"fault": item["fault"], "since": item["since"],
-                              "success": item["last_success_at"], "failure": item["last_failure_at"]}
+                              "success": item["last_success_at"], "failure": item["last_failure_at"],
+                              "unresolved": unresolved}
         if content is not None:
             self._observe_session(observed, content)
         notice = self.notice(capabilities, now)

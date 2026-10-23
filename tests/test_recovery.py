@@ -25,6 +25,47 @@ from youtube_strataread.workbench.workspace import YOUTUBE_DATA_CONTRACT, LocalW
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("cleanup", ["pending", "failed"])
+def test_incompatible_web_start_and_status_reads_preserve_connection_storage(tmp_path, monkeypatch, cleanup):
+    from fastapi.testclient import TestClient
+    from coworker.server import SessionManager, create_app
+
+    library = LocalWorkspace.open(tmp_path / "library")
+    library.set_meta("youtube_data_contract", str(YOUTUBE_DATA_CONTRACT + 1))
+    library.set_meta("youtube_disconnect_local", cleanup)
+    library.set_meta("youtube_disconnect_google", "pending")
+    library.set_meta("youtube_cutover", json.dumps({"held": True, "state": "draining", "drained": False}))
+    with sqlite3.connect(library.database_path) as database:
+        database.execute("DROP TABLE IF EXISTS youtube_api_usage")
+    before = library_facts(library.database_path, library.root)
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text('{"preserved":"synthetic-current-credential"}')
+    credentials.chmod(0o600)
+    content = tmp_path / "content"
+    if cleanup == "failed":
+        content.mkdir()
+        (content / "state.json").write_text('{"generation":7,"disconnected":true,"maintenance_started_at":123}')
+        (content / "current.cookies").write_text("synthetic-current-session")
+    content_before = {path.name: path.read_bytes() for path in content.glob("*")}
+    monkeypatch.setenv("YOUTUBE_WORKBENCH_WORKSPACE", str(library.root))
+    monkeypatch.setenv("EDISON_CONTENT_SESSION_DIR", str(content))
+    monkeypatch.setenv("EDISON_CREDENTIAL_FILE", str(credentials))
+    monkeypatch.setenv("COWORKER_API_TOKEN", "incompatible-test")
+    app = create_app(SessionManager(data_dir=tmp_path / "host"))
+    try:
+        with TestClient(app, headers={"X-OpenWorker-Token": "incompatible-test"}) as client:
+            for capability in ("connection.status", "activity.snapshot", "content_session.status", "acceptance.status"):
+                response = client.post("/v1/youtube/capability", json={"capability": capability}).json()
+                assert response["ok"], response
+            assert library_facts(library.database_path, library.root) == before
+            assert credentials.read_text() == '{"preserved":"synthetic-current-credential"}'
+            assert {path.name: path.read_bytes() for path in content.glob("*")} == content_before
+            if cleanup == "pending":
+                assert not content.exists()
+    finally:
+        app.state.youtube.close()
+
+
 def _candidate(video_id: str) -> Candidate:
     now = datetime.now(timezone.utc)
     return Candidate(video_id=video_id, channel_id="channel", channel_title="Channel", title=video_id,
