@@ -50,6 +50,27 @@ def observe(record, **overrides):
     record.observe(**values)
 
 
+def test_session_snapshot_and_withdrawal_do_not_prove_caption_recovery(record, clock):
+    record.begin()
+    observe(record, content=content(state="maintaining", failure="session", success=START - 100))
+    clock[0] += 60
+    observe(record, content=content(state="unverified", generation=2, success=START - 100))
+    covered = lambda: {item["key"]: item["covered"] for item in record.status()["current"]["coverage"]}
+    assert not covered()["fault_recovery"]
+    clock[0] += 60
+    observe(record, content=content(state="unverified", generation=2, success=START - 100))
+    assert not covered()["fault_recovery"]
+    clock[0] += 60
+    observe(record, content=content(generation=2, success=clock[0]))
+    assert covered()["fault_recovery"]
+
+    record.restart_period("new observation")
+    observe(record, content=content(state="interrupted", failure="network", success=clock[0]))
+    clock[0] += 60
+    observe(record, content=content(state="disconnected", success=None))
+    assert not covered()["fault_recovery"]
+
+
 def test_ordinary_waits_escalate_after_a_day_while_attention_is_immediate(record, clock):
     waiting = {"cooldown_until": START + 600, "failure_kind": "network", "first_failure_at": START,
                "last_failure_at": START, "reason": "无法连接 YouTube"}

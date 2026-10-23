@@ -132,7 +132,7 @@ class CutoverHold:
 
     def status(self):
         with self._lock:
-            expired = self._state.get("held") and (self.workspace.now() >= self._state["deadline_at"]
+            expired = not self._incompatible and self._state.get("held") and (self.workspace.now() >= self._state["deadline_at"]
                 or (self._monotonic_deadline is not None and time.monotonic() >= self._monotonic_deadline))
             if expired and self._state["state"] != "aborted":
                 self._state.update(state="aborted", reason="30 分钟内未完成安全收尾与正式验证，已中止切换；在途工作继续保存，采集保持暂停。")

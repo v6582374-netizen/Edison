@@ -159,6 +159,10 @@ if (root / 'legacy').exists() and not (root / 'legacy-seeded').exists():
 manager = SessionManager(data_dir=root / 'host', provider=Provider(), model='fixture-model')
 manager.get_settings = lambda: {'model_ready': (root / 'model-ready').exists()}
 app = create_app(manager)
+# Publication/qualification assertions use the exact selected epoch. Actual
+# downloader slots still need advancing time, including across a host restart.
+host = youtube.start_youtube(app, manager)
+host.workspace.youtube_requests.now = lambda: now() + max(0, time.time() - (root / 'clock').stat().st_mtime)
 sock = socket.socket()
 sock.bind(('127.0.0.1', 0))
 print(json.dumps({'port': sock.getsockname()[1]}), flush=True)

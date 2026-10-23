@@ -159,6 +159,7 @@ test('71-hour caption commencement survives a crash at 100 hours; disabled Auto 
     await app.toggle(true);
     await expect.poll(async () => (await app.call('activity.snapshot')).ready, {timeout:20000}).toBe(1);
     await page.getByRole('button', {name:'阅读文档', exact:true}).click();
+    await page.getByRole('combobox', {name:'按时间筛选'}).selectOption({label:'全部时间'});
     await expect(page.getByRole('button', {name:/continuing/})).toBeVisible();
   } finally {await app.close();}
 });
@@ -259,6 +260,7 @@ test('matching translation checkpoint survives a 100-hour restart without repeat
     const library = await app.call('library.inspect', {video_id:'checkpoint-video'});
     expect(library.source_trace.translation_available).toBe(true);
     await page.getByRole('button', {name:'阅读文档', exact:true}).click();
+    await page.getByRole('combobox', {name:'按时间筛选'}).selectOption({label:'全部时间'});
     await expect(page.getByRole('button', {name:/checkpoint-video/})).toBeVisible();
   } finally {await app.close();}
 });

@@ -340,7 +340,8 @@ class AutomaticBatch:
         return True
 
     def _publish(self) -> None:
-        self.preparation.workspace.set_batch_progress(limit=self.limit, completed=self.completed)
+        if not self.preparation.workspace.newer_data_contract:
+            self.preparation.workspace.set_batch_progress(limit=self.limit, completed=self.completed)
 
 
 @dataclass
