@@ -19,6 +19,7 @@ from platformdirs import user_data_dir
 from youtube_strataread.downloader.request_policy import (
     YouTubeRequestPolicy,
 )
+from youtube_strataread.workbench import acceptance
 from youtube_strataread.workbench.freshness import WAITING_REASONS, preparation_admission
 from youtube_strataread.workbench.retry import (
     MAX_AUTOMATIC_ATTEMPTS,
@@ -646,10 +647,13 @@ class LocalWorkspace:
 
     @staticmethod
     def _activity_event(connection: sqlite3.Connection, video_id: str, stage: str, detail: str = "") -> None:
+        now = time.time()
         connection.execute(
             "INSERT INTO preparation_events (video_id, stage, detail, occurred_at) VALUES (?, ?, ?, ?)",
-            (video_id, stage, detail, time.time()),
+            (video_id, stage, detail, now),
         )
+        # Acceptance evidence outlives the console and a later asset deletion.
+        acceptance.record_task(connection, video_id, stage, now)
         LocalWorkspace._console_entry(connection, video_id, f"[{stage}] {detail}".rstrip())
 
     def change_queue(self, video_ids: list[str], *, restore: bool = False) -> dict[str, object]:
@@ -1285,6 +1289,7 @@ class LocalWorkspace:
                     return
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA foreign_keys=ON")
+            connection.executescript(acceptance.SCHEMA)
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS youtube_source_observations (

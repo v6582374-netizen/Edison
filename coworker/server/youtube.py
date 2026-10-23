@@ -6,6 +6,7 @@ No second model client, credential copy, or auxiliary server is introduced.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -22,7 +23,8 @@ from pydantic import BaseModel, Field
 
 from coworker.secrets import state_dir
 from youtube_strataread.downloader.youtube import youtube_cookie_file
-from youtube_strataread.workbench import session_cookies
+from youtube_strataread.workbench import acceptance, session_cookies
+from youtube_strataread.workbench.acceptance import AcceptanceRecord
 from youtube_strataread.workbench.connection import (
     ConnectionError,
     ConnectionService,
@@ -149,6 +151,13 @@ class YouTubeWorkbench:
             separately_managed=[content_root, *([Path(credential_file)] if credential_file else [])])
         if self.managed_content:
             self.connection.resume_disconnection(clear_content=self.content_session.clear)
+        self.acceptance = AcceptanceRecord(self.workspace)
+        self._last_evidence_inputs = None
+        if not self.cutover.held:
+            with self.cutover.work():
+                self.acceptance.host_started(build=acceptance.build_id(),
+                                             policy=acceptance.policy_fingerprint(self.managed_content),
+                                             boot=acceptance.boot_id())
         if not self.cutover.incompatible:
             self.workspace.recover_interrupted_preparations()
         from youtube_strataread.workbench.manual import ManualVideoRequests
@@ -209,6 +218,7 @@ class YouTubeWorkbench:
         # may leave the current stage unchanged while this process is responsive.
         while not self.stop.is_set() and self.thread.is_alive():
             self.heartbeat_at = time.time()
+            self._observe()
             try:
                 with self.cutover.work():
                     self.content_session.tick()
@@ -241,6 +251,11 @@ class YouTubeWorkbench:
             return False
 
     def close(self) -> None:
+        # Planned exit is recorded before sealing admission. After the seal,
+        # backups may rely on a fully drained workspace having no writers.
+        with contextlib.suppress(CutoverBlocked):
+            with self.cutover.work():
+                self.acceptance.host_stopped()
         self.cutover.seal()
         self.stop.set()
         self.maintenance_stop.set()
@@ -252,6 +267,91 @@ class YouTubeWorkbench:
         self.cutover.wait_idle()
         self.content_session.shutdown()
         self.connection.release_server_ownership()
+
+    def _content_status(self) -> dict[str, Any] | None:
+        if not self.managed_content:
+            return None
+        from youtube_strataread.workbench.content_session import ContentSessionError
+        try:
+            return self.content_session.status()
+        except ContentSessionError as error:
+            # Storage or ownership faults are themselves capability evidence.
+            return {"state": "needs_maintenance", "failure_kind": "maintenance", "reason": str(error),
+                    "maintenance": {}}
+
+    def _evidence_inputs(self) -> dict[str, Any]:
+        return {"subscription": self.connection.subscription_capability(), "content": self._content_status(),
+                "requests": self.workspace.youtube_requests.snapshot(), "gate": self.connection.api.gate()}
+
+    def _observe(self) -> None:
+        """Capability evidence is sampled here; liveness alone proves nothing."""
+        try:
+            with self.cutover.work():
+                refreshed = self.workspace.meta("youtube_oauth_refreshed_at")
+                inputs = self._evidence_inputs()
+                self.acceptance.observe(**inputs,
+                                        resources=self.resources.status() if self.resources else None,
+                                        refreshed_at=float(refreshed) if refreshed else None)
+                self._last_evidence_inputs = inputs
+        except Exception:
+            # Evidence never stops background work; the gap shows as missing days.
+            pass
+
+    def _witness(self, capability: str, arguments: dict[str, Any]):
+        """Classify a person's action before it changes state; record it after success."""
+        record = self.acceptance
+        if capability in {"content_session.open", "content_session.confirm"} and self.managed_content:
+            status = self._content_status() or {}
+            maintenance = (status.get("maintenance") or {}).get("state")
+            if maintenance == "handoff" or status.get("state") == "needs_user" and status.get("last_success_at"):
+                return lambda: record.intervention("security_verification", step=capability.split(".")[1])
+            if capability == "content_session.confirm":
+                return lambda: record.connected("content")
+            # Stepping into pending ordinary maintenance is manual session work.
+            ordinary = bool(status.get("last_success_at")) and maintenance in {
+                "due", "running", "waiting_budget", "waiting_resources", "waiting_cooldown"}
+            return lambda: record.intervention("manual_session_open", ordinary=ordinary, maintenance=maintenance)
+        if capability == "content_session.verify":
+            ordinary = self.workspace.youtube_requests.snapshot().get("failure_kind") in {"network", "rate_limited"}
+            return lambda: record.intervention("manual_check", ordinary=ordinary)
+        if capability == "connection.import_authorization":
+            replacing = (self.workspace.meta("youtube_oauth_authorized") == "1"
+                         and self.workspace.meta("youtube_reconnect_required") != "1")
+            if replacing:
+                def replaced():
+                    record.intervention("credential_replacement", ordinary=True)
+                    record.connected("official")
+                return replaced
+            return lambda: record.connected("official")
+        if capability in {"activity.retry", "activity.retry_all_failed", "manual.retry"}:
+            query = ("SELECT COUNT(*), SUM(acquisition_failure_kind IN ('network', 'rate_limited')) "
+                     "FROM candidates WHERE preparation_state = 'failed'")
+            values: tuple = ()
+            if capability in {"activity.retry", "manual.retry"}:
+                query += " AND video_id = ?"
+                values = (str(arguments.get("video_id", "")),)
+            with sqlite3.connect(self.workspace.database_path) as connection:
+                total, ordinary = connection.execute(query, values).fetchone()
+            return lambda: record.intervention("manual_retry", ordinary=bool(ordinary), videos=total or 0)
+        if capability == "session_cookies.replace":
+            return lambda: record.intervention("credential_move", ordinary=True)
+        # Opening the channel list syncs subscriptions automatically; that is not a person's retry.
+        reasons = {"connection.disconnect": "disconnect", "cutover.begin": "maintenance_window", "cutover.abort": "maintenance_window",
+                   "cutover.migrate": "maintenance_window"}
+        if capability in reasons:
+            return lambda: record.intervention(reasons[capability], action=capability)
+        return None
+
+    def _health(self) -> dict[str, Any]:
+        # Whatever the page is told is also on record, even between samples.
+        self._observe()
+        # ContentSession.status may detect a browser exit and persist a fault.
+        # During a hold use the last admitted sample; health remains readable
+        # without invalidating the backup's proof that writers have stopped.
+        inputs = self._last_evidence_inputs or {
+            "subscription": self.connection.subscription_capability(), "content": None,
+            "requests": self.workspace.youtube_requests.snapshot(), "gate": self.connection.api.gate()}
+        return self.acceptance.health(**inputs)
 
     def ensure_summary(self, video_id: str) -> str:
         with self.summary_locks_guard:
@@ -305,6 +405,46 @@ class YouTubeWorkbench:
         return status
 
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability.startswith("acceptance."):
+            # Evidence and observation controls never start YouTube work.
+            try:
+                if capability == "acceptance.status":
+                    return {"ok": True, "result": self.acceptance.status()}
+                if capability == "acceptance.export":
+                    return {"ok": True, "result": self.acceptance.export()}
+                if capability == "acceptance.begin":
+                    with self.cutover.work():
+                        return {"ok": True, "result": self.acceptance.begin()}
+                if capability == "acceptance.drill":
+                    reason = str(arguments.get("reason") or "")[:200]
+                    with self.cutover.work():
+                        return {"ok": True, "result": self.acceptance.drill(arguments.get("active") is True, reason)}
+                if capability == "acceptance.record_reading":
+                    with self.cutover.work():
+                        return {"ok": True, "result": self.acceptance.record_reading(arguments)}
+            except CutoverBlocked as error:
+                return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+            except ValueError as error:
+                return {"ok": False, "error": str(error)}
+            return {"ok": False, "error": "不支持的验收操作。"}
+        witnessed = {"content_session.open", "content_session.confirm", "content_session.verify",
+                     "connection.import_authorization", "activity.retry", "activity.retry_all_failed",
+                     "manual.retry", "session_cookies.replace", "connection.disconnect", "cutover.begin"}
+        if capability not in witnessed:
+            return self._admitted_dispatch(capability, arguments)
+        try:
+            with self.cutover.work(withdrawal=capability in {"connection.disconnect", "cutover.begin"}):
+                witness = self._witness(capability, arguments)
+                response = self._admitted_dispatch(capability, arguments)
+                if witness is not None and response.get("ok"):
+                    # The person's completed action stands even if evidence fails.
+                    with contextlib.suppress(Exception):
+                        witness()
+                return response
+        except CutoverBlocked as error:
+            return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+
+    def _admitted_dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if capability.startswith("cutover."):
             if self.cutover.incompatible and capability != "cutover.status":
                 # An older program never migrates or backs up a newer library.
@@ -611,6 +751,8 @@ class YouTubeWorkbench:
                         "discovering": self.workspace.meta("youtube_discovery_scanning") == "1",
                         "discovery_worker_alive": self.discovery_thread.is_alive(),
                     },
+                    "health": self._health(),
+                    "acceptance": self.acceptance.status(),
                     "model": self.manager.model,
                     "model_ready": bool(self.manager.get_settings().get("model_ready")),
                     "discovery_error": self.discovery.snapshot().get("error"),

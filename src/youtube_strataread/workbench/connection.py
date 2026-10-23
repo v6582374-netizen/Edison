@@ -377,7 +377,7 @@ class ConnectionService:
 
     def _failed(self, error: Exception, generation: int) -> None:
         with self._publication(generation):
-            self.workspace.set_meta("youtube_subscriptions_failed_at", str(time.time()))
+            self.workspace.set_meta("youtube_subscriptions_failed_at", str(self.workspace.now()))
             kind = getattr(error, "kind", "reauthorization" if isinstance(error, AuthorizationRequired) else "service")
             self.workspace.set_meta("youtube_subscriptions_failure_kind", kind)
             self.workspace.set_meta("youtube_subscriptions_last_failure_kind", kind)
@@ -422,7 +422,7 @@ class ConnectionService:
                 raise
 
     def _subscription_success(self) -> None:
-        self.workspace.set_meta("youtube_subscriptions_synced_at", str(time.time()))
+        self.workspace.set_meta("youtube_subscriptions_synced_at", str(self.workspace.now()))
         self.workspace.set_meta("youtube_subscriptions_error", "")
         self.workspace.set_meta("youtube_subscriptions_failure_kind", "")
         self._verified_this_process = True
@@ -659,6 +659,8 @@ class ConnectionService:
                 credentials.expires_at,
             )
             self._store_credentials(credentials, generation)
+            # Acceptance evidence of an ordinary refresh: a time, never a token.
+            self.workspace.set_meta("youtube_oauth_refreshed_at", str(self.workspace.now()))
         return credentials
 
     def _store_credentials(self, credentials: OAuthCredentials, generation: int) -> None:
