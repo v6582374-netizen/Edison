@@ -506,7 +506,19 @@
     "正在保存用户最新操作，等待写者结束。": "Saving your latest changes and waiting for writers to finish.",
     "浏览器写者尚未确认退出；采集保持暂停，请检查服务。": "Browser writer exit could not be confirmed. Acquisition remains paused; check the service.",
     "在途成果已保存，采集线程与连接写者已结束；等待正式验证，采集保持暂停。": "Active results are saved and acquisition workers and connection writers have stopped. Formal verification is still required; acquisition remains paused.",
-    "切换收尾状态无法保存；采集保持暂停，请修复存储后检查服务。": "Cutover completion could not be saved. Acquisition remains paused; repair storage and check the service."
+    "切换收尾状态无法保存；采集保持暂停，请修复存储后检查服务。": "Cutover completion could not be saved. Acquisition remains paused; repair storage and check the service.",
+    "程序与资料不兼容 · 只读阅读": "Program incompatible with library · read-only",
+    "资料库由更新的程序写入；本程序只提供阅读，采集与连接变更保持暂停。": "A newer program wrote this library. This program only serves reading; acquisition and connection changes stay paused.",
+    "已从一致性备份恢复；备份之后的资料与连接变化不在其中，采集保持暂停。": "Restored from a consistent backup. Documents and connection changes after the backup are not included; acquisition remains paused.",
+    "一致性备份已通过恢复验证：{{time}}": "Consistent backup passed restore verification: {{time}}",
+    "一致性备份未通过恢复验证：{{time}}": "Consistent backup failed restore verification: {{time}}",
+    "文稿 {{documents}} 篇 · 版本 {{versions}} 个 · 字幕 {{transcripts}} 份 · 完整译文 {{translations}} 份": "{{documents}} documents · {{versions}} versions · {{transcripts}} transcripts · {{translations}} complete translations",
+    "认证资料单独管理，未进入备份。": "Credentials are managed separately and are not in the backup.",
+    "尚无一致性备份": "No consistent backup yet",
+    "取得一致性备份并验证恢复": "Take a consistent backup and verify restore",
+    "一致性备份只能在切换暂停内、所有写者确认结束后取得。": "A consistent backup can only be taken during the cutover hold after every writer is confirmed stopped.",
+    "备份期间出现新的写入，本次备份已作废；收尾完成后请重新取得。": "A new write arrived while backing up, so this backup was discarded. Take it again after the drain completes.",
+    "一致性备份没有完成，请检查备份目录后在切换暂停内重试。": "The consistent backup did not finish. Check the backup directory and retry during the cutover hold."
   },
   "boot": {
     "starting": "Starting OpenWorker…",

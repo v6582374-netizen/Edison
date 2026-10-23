@@ -28,6 +28,12 @@ from youtube_strataread.workbench.retry import (
 )
 from youtube_strataread.workbench.shorts import CLASSIFICATION_RETRY_SECONDS
 
+# The library format this program can safely interpret. Bump it when an earlier
+# program could misread the library or act against newer user intent; additive
+# columns an earlier program simply ignores do not need a bump. The library
+# records the highest contract that ever opened it and never lowers it.
+YOUTUBE_DATA_CONTRACT = 1
+
 # Stages in which a task holds no processing position while it waits.
 YIELDING_STAGES = frozenset({"queued", "restored", "rate_limited", "waiting_retry", "awaiting_classification"})
 # Stages that end or park a task outside preparation; their time is not processing.
@@ -73,6 +79,8 @@ class LocalWorkspace:
         self.youtube_requests = YouTubeRequestPolicy(self.database_path)
         self.youtube_requests.now = self.now
         self.model_gate = ModelAccountGate(self.database_path)
+        # (library contract, this program's contract) when a newer program wrote it.
+        self.newer_data_contract: tuple[int, int] | None = None
 
     @staticmethod
     def now() -> float:
@@ -273,7 +281,7 @@ class LocalWorkspace:
             held = connection.execute(
                 "SELECT value FROM workspace_meta WHERE key = 'youtube_cutover'"
             ).fetchone()
-            if held and json.loads(held[0]).get("held"):
+            if (held and json.loads(held[0]).get("held")) or _recorded_contract(connection) > YOUTUBE_DATA_CONTRACT:
                 connection.commit()
                 return None
             paused = connection.execute(
@@ -1268,6 +1276,13 @@ class LocalWorkspace:
 
     def _initialize_database(self) -> None:
         with sqlite3.connect(self.database_path) as connection:
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_meta'").fetchone():
+                recorded = _recorded_contract(connection)
+                if recorded > YOUTUBE_DATA_CONTRACT:
+                    # Inspect the contract before any old migration can rewrite
+                    # a library whose newer semantics this program cannot own.
+                    self.newer_data_contract = (recorded, YOUTUBE_DATA_CONTRACT)
+                    return
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA foreign_keys=ON")
             connection.executescript(
@@ -1422,6 +1437,17 @@ class LocalWorkspace:
                 connection.execute(
                     "INSERT INTO workspace_meta(key, value) VALUES ('youtube_rate_limit_migration_v1', '1')"
                 )
+            recorded = _recorded_contract(connection)
+            if recorded < YOUTUBE_DATA_CONTRACT:
+                connection.execute(
+                    "INSERT INTO workspace_meta(key, value) VALUES ('youtube_data_contract', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(YOUTUBE_DATA_CONTRACT),))
+            self.newer_data_contract = (recorded, YOUTUBE_DATA_CONTRACT) if recorded > YOUTUBE_DATA_CONTRACT else None
+
+
+def _recorded_contract(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT value FROM workspace_meta WHERE key = 'youtube_data_contract'").fetchone()
+    return int(row[0]) if row and str(row[0]).isdigit() else 0
 
 
 def workspace_root() -> Path:

@@ -55,6 +55,7 @@ def test_verified_cookie_replacement_retries_only_session_blocked_videos(monkeyp
     from test_workbench_library import candidate
 
     from coworker.server import youtube
+    from youtube_strataread.workbench.cutover import CutoverHold
     from youtube_strataread.workbench.workspace import LocalWorkspace
 
     workspace = LocalWorkspace.open(tmp_path / 'workspace')
@@ -64,6 +65,8 @@ def test_verified_cookie_replacement_retries_only_session_blocked_videos(monkeyp
     workspace.set_preparation_state('other00001', 'failed', 'unrelated failure')
     workbench = youtube.YouTubeWorkbench.__new__(youtube.YouTubeWorkbench)
     workbench.workspace = workspace
+    workbench.cutover = CutoverHold(workspace)
+    workbench.managed_content = False  # The legacy cookie entry is retired only in managed mode.
     path = tmp_path / 'cookies.txt'
     monkeypatch.setattr(youtube, 'youtube_cookie_file', lambda: path)
     monkeypatch.setattr(session_cookies, 'replace', lambda *args: {'saved': True})
