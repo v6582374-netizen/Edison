@@ -33,6 +33,7 @@ from translation_fixture import source_from_prompt
 
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from coworker.server import SessionManager, create_app
+from coworker.server.youtube import start_youtube
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench import connection, discovery, manual, shorts, workspace
 from youtube_strataread.workbench.library import YtDlpCaptions
@@ -225,6 +226,13 @@ class Provider(ProviderClient):
 manager = SessionManager(data_dir=root / 'host', provider=Provider(), model='fixture-model')
 manager.get_settings = lambda: {'model_ready': config().get('model_ready', True)}
 app = create_app(manager)
+# Keep exact video timestamps while letting the real acquisition pacing clock
+# advance between platform page requests. A frozen clock stalls the next slot.
+host = start_youtube(app, manager)
+def acquisition_now():
+    elapsed = max(0, time.time() - (root / 'clock').stat().st_mtime) if config().get('platform_pages') else 0
+    return now() + elapsed
+host.workspace.youtube_requests.now = acquisition_now
 sock = socket.socket()
 sock.bind(('127.0.0.1', 0))
 print(json.dumps({'port':sock.getsockname()[1]}), flush=True)
