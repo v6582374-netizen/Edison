@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { youtubeCapability } from "../../api";
+import { youtubeCapability, youtubeValidationCapability } from "../../api";
 import type { Connection } from "./types";
 import { yt } from "./text";
 
 /** Trusted-device handoff stays in memory and never enters browser storage. */
-export function OfficialAuthorization({ connection, onChange }: {
-  connection: Connection; onChange: (value: Connection) => void;
+export function OfficialAuthorization({ connection, onChange, maintenance = false }: {
+  connection: Connection; onChange: (value: Connection) => void; maintenance?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -13,7 +13,7 @@ export function OfficialAuthorization({ connection, onChange }: {
   const when = (value?: number | null) => value ? new Date(value * 1000).toLocaleString() : yt("尚未验证");
   async function request(name: string, args = {}) {
     setBusy(true); setError("");
-    try { onChange(await youtubeCapability<Connection>(name, args)); }
+    try { onChange(await (maintenance ? youtubeValidationCapability : youtubeCapability)<Connection>(name, args)); }
     catch (failure) {
       setError(failure instanceof Error ? failure.message : yt("连接检查失败"));
       try { onChange(await youtubeCapability<Connection>("connection.status")); } catch { /* retain last observed evidence */ }

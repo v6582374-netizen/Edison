@@ -614,7 +614,17 @@
     "取得一致性备份并验证恢复": "Take a consistent backup and verify restore",
     "一致性备份只能在切换暂停内、所有写者确认结束后取得。": "A consistent backup can only be taken during the cutover hold after every writer is confirmed stopped.",
     "备份期间出现新的写入，本次备份已作废；收尾完成后请重新取得。": "A new write arrived while backing up, so this backup was discarded. Take it again after the drain completes.",
-    "一致性备份没有完成，请检查备份目录后在切换暂停内重试。": "The consistent backup did not finish. Check the backup directory and retry during the cutover hold."
+    "一致性备份没有完成，请检查备份目录后在切换暂停内重试。": "The consistent backup did not finish. Check the backup directory and retry during the cutover hold.",
+    "正式授权应用标识": "Formal authorization client ID",
+    "开始正式连接验证": "Begin formal connection validation",
+    "正式连接验证中；自动与手动处理继续暂停。": "Formal connection validation is in progress. Automatic and manual preparation remain paused.",
+    "订阅刷新：{{official}} · 同账号字幕：{{initial}} · 关闭浏览器后字幕：{{closed}} · 重启后字幕：{{restarted}}": "Subscription refresh: {{official}} · Same-account captions: {{initial}} · Captions after browser close: {{closed}} · Captions after restart: {{restarted}}",
+    "已通过": "Passed",
+    "待验证": "Pending verification",
+    "打开正式连接验证": "Open formal connection validation",
+    "完成内容登录与同账号确认后，关闭服务器浏览器并再次检查同一视频的字幕。准备重启后由维护者正常重启服务，原截止时间不会延长。": "After content sign-in and same-account confirmation, close the server browser and fetch captions for the same video again. The maintainer then prepares and normally restarts the service. The original deadline remains unchanged.",
+    "准备计划重启验证": "Prepare planned restart validation",
+    "完成正式验证并恢复当前许可的处理": "Complete formal validation and resume currently permitted work"
   },
   "boot": {
     "starting": "Starting OpenWorker…",

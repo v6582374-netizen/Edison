@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { YouTubeCapabilityError, youtubeCapability } from "../api";
+import { YouTubeCapabilityError, youtubeCapability, youtubeValidationCapability } from "../api";
 
 export type SessionMaintenance = {
   state: "idle" | "due" | "running" | "waiting_budget" | "waiting_resources" | "waiting_cooldown" | "handoff";
@@ -18,7 +18,8 @@ type Screen = { image: string; width: number; height: number };
 const button = "rounded-lg border border-line px-3 py-2 text-[13px] hover:bg-panel disabled:opacity-40";
 const reconnect = "无法连接 Edison 服务器。请检查网络；若通过 SSH 隧道访问，请先恢复隧道，再重试连接。尚未收到的操作结果暂不可确认，这不代表 Google 登录失败。";
 
-export function YouTubeSessionSettings() {
+export function YouTubeSessionSettings({ maintenance: maintenanceMode = false }: {maintenance?: boolean} = {}) {
+  const request = maintenanceMode ? youtubeValidationCapability : youtubeCapability;
   const [status, setStatus] = useState<ContentSessionStatus | null>(null);
   const [screen, setScreen] = useState<Screen | null>(null);
   const [sameAccount, setSameAccount] = useState(false);
@@ -71,7 +72,7 @@ export function YouTubeSessionSettings() {
         if (!current()) return;
         setStatus(state);
         if (!state.browser_running || state.maintenance?.state === "running") { setScreen(null); return; }
-        const next = await youtubeCapability<Screen>("content_session.screen");
+        const next = await request<Screen>("content_session.screen");
         if (!current()) return;
         setScreen(next);
         timer = setTimeout(poll, 1200);
@@ -100,7 +101,7 @@ export function YouTubeSessionSettings() {
     setBusy(operation); setError("");
     if (["open", "confirm", "close"].includes(operation)) { revision.current++; setScreen(null); }
     try {
-      const next = await youtubeCapability<ContentSessionStatus>(`content_session.${operation}`, {url: videoUrl, same_account: sameAccount});
+      const next = await request<ContentSessionStatus>(`content_session.${operation}`, {url: videoUrl, same_account: sameAccount});
       setStatus(next); setNetworkError(""); setViewError(""); setViewAttempt(value => value + 1);
     } catch (failure) {
       failed(failure, operation === "open", operation === "open" ? "open" : "status");
@@ -119,7 +120,7 @@ export function YouTubeSessionSettings() {
     const observed = revision.current;
     // Failed or retired views discard pending input; never replay credentials on recovery.
     queued.current = queued.current.then(async () => {
-      if (observed === revision.current) await youtubeCapability(`content_session.${operation}`, args);
+      if (observed === revision.current) await request(`content_session.${operation}`, args);
     }).catch(failure => { if (observed === revision.current) failed(failure, true, "open"); });
   };
   return <section aria-label="YouTube 内容会话" className="space-y-3 mt-5">

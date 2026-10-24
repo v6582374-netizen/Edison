@@ -33,7 +33,7 @@ from youtube_strataread.workbench.shorts import CLASSIFICATION_RETRY_SECONDS
 # program could misread the library or act against newer user intent; additive
 # columns an earlier program simply ignores do not need a bump. The library
 # records the highest contract that ever opened it and never lowers it.
-YOUTUBE_DATA_CONTRACT = 1
+YOUTUBE_DATA_CONTRACT = 2
 
 # Stages in which a task holds no processing position while it waits.
 YIELDING_STAGES = frozenset({"queued", "restored", "rate_limited", "waiting_retry", "awaiting_classification"})

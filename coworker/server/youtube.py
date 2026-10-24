@@ -127,7 +127,10 @@ class YouTubeWorkbench:
             workspace=self.workspace, vault=NativeKeychainVault(namespace=str(root.resolve())), oauth=GoogleOAuthGateway()
         )
         self.connection.claim_server_ownership()
-        self.cutover = CutoverHold(self.workspace)
+        content_root = Path(os.environ.get("EDISON_CONTENT_SESSION_DIR", str(root.parent / "youtube-content-session"))).resolve()
+        self.cutover_context = {"build": acceptance.build_id(), "uid": os.geteuid(), "profile": str(content_root)}
+        self.cutover = CutoverHold(self.workspace, context=self.cutover_context,
+                                   bootstrap_started_at=os.environ.get("EDISON_CUTOVER_STARTED_AT"))
         self.migration = HistoricalMigration(
             self.workspace, self.connection.vault, identity_lock=self.connection._identity_lock)
         from youtube_strataread.workbench.content_session import ContentSession
@@ -207,7 +210,7 @@ class YouTubeWorkbench:
 
     def _watch_cutover(self):
         while not self.maintenance_stop.wait(.2):
-            if self.cutover.held and not self.cutover.incompatible:
+            if self.cutover.held and not self.cutover.incompatible and not self.cutover.validating:
                 self.cutover.observe_drain(self._workers(), self.content_session.close_browser)
 
     def _sync_subscriptions(self) -> None:
@@ -263,9 +266,11 @@ class YouTubeWorkbench:
         # Never interrupt an admitted downloader/model call to satisfy a drain.
         # Returning from the complete work scopes proves results were saved.
         for worker in self._workers():
-            worker.join()
+            if worker.ident is not None:
+                worker.join()
         self.cutover.wait_idle()
         self.content_session.shutdown()
+        self.cutover.closed_normally()
         self.connection.release_server_ownership()
 
     def _content_status(self) -> dict[str, Any] | None:
@@ -408,6 +413,125 @@ class YouTubeWorkbench:
         status["backup"] = self.backup.status()
         return status
 
+    def _verify_cutover_profile(self, proofs):
+        status = self.content_session.status()
+        initial = proofs.get("initial") or {}
+        closed = proofs.get("closed") or {}
+        if (not initial or not closed or status.get("state") != "available"
+                or status.get("browser_running") or status.get("account_consistency") != "user_confirmed_not_verified"
+                or status.get("generation") != initial.get("generation")
+                or closed.get("generation") != initial.get("generation")
+                or closed.get("video_id") != initial.get("video_id")
+                or not self.connection.status().authorized
+                or acceptance.build_id() != self.cutover_context["build"]
+                or initial.get("profile") != self._cutover_profile_identity()
+                or not self.connection.matches_cutover_client(proofs.get("expected_client"))
+                or not (self.backup.status() or {}).get("verified")
+                or not self.migration.status().get("finished")):
+            raise CutoverBlocked("当前连接、字幕或备份与正式验证不一致；采集继续暂停。")
+        restarted = proofs.get("restarted")
+        if restarted and (restarted.get("generation") != initial["generation"]
+                          or restarted.get("video_id") != initial["video_id"]):
+            raise CutoverBlocked("重启后的字幕检查与正式验证不一致。")
+
+    def _cutover_profile_identity(self):
+        info = (self.content_session.root / "profile").stat()
+        return [info.st_dev, info.st_ino, info.st_uid]
+
+    def _restart_cutover_workers(self):
+        # Thread objects cannot be reused. The old set has been proved stopped;
+        # a fresh set rechecks the latest durable Auto Update and manual intents.
+        self.stop = threading.Event()
+        resumed = threading.Event()
+        def guarded(target, *args):
+            resumed.wait()
+            if not self.stop.is_set():
+                target(*args)
+        self.thread = threading.Thread(target=guarded, args=(self._run,), name="edison-youtube", daemon=True)
+        self.discovery_thread = threading.Thread(target=guarded,
+            args=(self.discovery.run, self.stop, self.refresh_requested), name="edison-youtube-discovery", daemon=True)
+        self.heartbeat_thread = threading.Thread(target=guarded, args=(self._heartbeat,), name="edison-youtube-heartbeat", daemon=True)
+        self.subscription_thread = threading.Thread(target=guarded, args=(self._sync_subscriptions,), name="edison-subscriptions", daemon=True)
+        started = []
+        def cancel():
+            self.stop.set()
+            resumed.set()
+            for worker in started:
+                worker.join()
+        try:
+            for worker in (self.discovery_thread, self.thread, self.heartbeat_thread, self.subscription_thread):
+                worker.start()
+                started.append(worker)
+        except Exception:
+            cancel()
+            raise
+        return resumed.set, cancel
+
+    def _validate_cutover(self, request):
+        """Only this explicit authenticated maintenance path may validate a hold."""
+        capability = request.get("capability")
+        arguments = request.get("arguments") or {}
+        allowed = {"connection.check", "connection.import_authorization", "content_session.open",
+                   "content_session.confirm", "content_session.verify", "content_session.close",
+                   "content_session.screen", "content_session.click", "content_session.text",
+                   "content_session.key", "content_session.scroll", "content_session.youtube"}
+        if capability not in allowed or not isinstance(arguments, dict):
+            return {"ok": False, "error": "此操作不属于正式连接验证。"}
+        try:
+            with self.cutover.validation_work() as revision:
+                validation = self.cutover.status()["validation"]
+                witness = self._witness(capability, arguments)
+                if capability.startswith("connection."):
+                    if (capability == "connection.import_authorization" and
+                            arguments.get("client_id") != validation["proofs"]["expected_client"]):
+                        raise CutoverBlocked("OAuth client 不匹配；未替换当前连接。")
+                    self.cutover.reset_validation(revision, keys=("official", "initial", "closed", "restarted")
+                                                  if capability == "connection.import_authorization" else ("official", "restarted"))
+                    if capability == "connection.check":
+                        result = self.connection.check_cutover_connection(validation["proofs"]["expected_client"])
+                        response = {"ok": True, "result": result.as_result()}
+                    else:
+                        response = self._dispatch(capability, arguments)
+                    if response.get("ok"):
+                        # The import itself refreshes and reads real subscriptions.
+                        if not self.connection.status().subscription_count:
+                            raise CutoverBlocked("订阅为空，正式连接尚未通过。")
+                        self.cutover.validation_proof(revision, "official", {"at": self.workspace.now()})
+                else:
+                    if capability in {"content_session.open", "content_session.confirm"}:
+                        self.cutover.reset_validation(revision)
+                    before = self.content_session.status()
+                    response = self._dispatch(capability, arguments)
+                    if response.get("ok") and capability in {"content_session.confirm", "content_session.verify"}:
+                        after = self.content_session.status()
+                        if after.get("account_consistency") != "user_confirmed_not_verified" or after.get("browser_running"):
+                            raise CutoverBlocked("必须先确认同一 Google 账号并关闭服务器浏览器。")
+                        video_id = arguments.get("video_id")
+                        if arguments.get("url"):
+                            from youtube_strataread.workbench.manual import video_identity
+                            video_id = video_identity(arguments["url"])
+                        proof = {"at": self.workspace.now(), "video_id": video_id,
+                                 "generation": after["generation"], "profile": self._cutover_profile_identity()}
+                        if capability == "content_session.confirm":
+                            self.cutover.validation_proof(revision, "initial", proof)
+                        elif not before.get("browser_running"):
+                            initial = validation["proofs"].get("initial")
+                            if initial and initial["generation"] == proof["generation"] and initial["video_id"] == video_id:
+                                self.cutover.validation_proof(revision, "closed", proof)
+                                if validation.get("restarted"):
+                                    self.cutover.validation_proof(revision, "restarted", proof)
+                if response.get("ok"):
+                    with contextlib.suppress(Exception):
+                        if capability == "connection.check":
+                            self.acceptance.connection_verified("official")
+                        elif witness is not None:
+                            witness()
+                return response
+        except (ConnectionError, ValueError) as error:
+            return {"ok": False, "kind": getattr(error, "kind", "cutover_hold"), "error": str(error)}
+        except (OSError, sqlite3.Error):
+            return {"ok": False, "kind": "storage", "error": "正式验证的存储不可用；采集继续暂停，请检查服务。"}
+
     def dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if capability.startswith("acceptance."):
             # Evidence and observation controls never start YouTube work.
@@ -453,6 +577,8 @@ class YouTubeWorkbench:
             if self.cutover.incompatible and capability != "cutover.status":
                 # An older program never migrates or backs up a newer library.
                 return {"ok": False, "kind": "cutover_hold", "error": self.cutover.incompatible}
+            if self.cutover.validating and capability in {"cutover.migrate", "cutover.backup"}:
+                return {"ok": False, "kind": "cutover_hold", "error": "正式验证期间不能重新迁移或取得基准备份。"}
             if capability == "cutover.begin":
                 self.cutover.begin(self.stop)
                 return {"ok": True, "result": self._cutover_status()}
@@ -461,6 +587,41 @@ class YouTubeWorkbench:
                 return {"ok": True, "result": self._cutover_status()}
             if capability == "cutover.status":
                 return {"ok": True, "result": self._cutover_status()}
+            if capability == "cutover.validation.begin":
+                try:
+                    migration = self.migration.status()
+                    if (not self.managed_content or not (self.backup.status() or {}).get("verified")
+                            or not migration.get("finished") or not migration.get("client_match")
+                            or not all(migration.get("credential_check", {}).get(key) for key in ("read", "atomic_replace", "owner_only"))
+                            or migration.get("identity_withdrawn") or not arguments.get("expected_client_id")):
+                        raise CutoverBlocked("必须先完成已验证的一致性备份、凭据与历史迁移。")
+                    if not self.connection.matches_cutover_client(arguments["expected_client_id"]):
+                        raise CutoverBlocked("OAuth client 不匹配；未开始正式验证。")
+                    self.cutover.begin_validation(self.cutover_context)
+                    self.cutover.validation_proof(0, "expected_client", arguments["expected_client_id"])
+                    return {"ok": True, "result": self._cutover_status()}
+                except ConnectionError as error:
+                    return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+            if capability == "cutover.validate":
+                return self._validate_cutover(arguments)
+            if capability in {"cutover.prepare_restart", "cutover.complete"}:
+                try:
+                    if capability == "cutover.prepare_restart":
+                        self._verify_cutover_profile(self.cutover.status().get("validation", {}).get("proofs", {}))
+                        self.cutover.prepare_restart()
+                    else:
+                        if any(worker.is_alive() for worker in self._workers()):
+                            raise CutoverBlocked("旧处理线程尚未结束，不能完成切换。")
+                        self.cutover.complete_validation(self._verify_cutover_profile, self._restart_cutover_workers)
+                        with contextlib.suppress(Exception):
+                            with self.cutover.work():
+                                self.acceptance.host_started(build=acceptance.build_id(),
+                                    policy=acceptance.policy_fingerprint(self.managed_content), boot=acceptance.boot_id())
+                    return {"ok": True, "result": self._cutover_status()}
+                except CutoverBlocked as error:
+                    return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+                except (OSError, sqlite3.Error, RuntimeError):
+                    return {"ok": False, "kind": "storage", "error": "正式验证完成状态未能保存或处理线程无法启动；采集继续暂停，请检查服务。"}
             if capability == "cutover.migrate":
                 try:
                     migrated = self.migration.run(arguments)
@@ -503,6 +664,8 @@ class YouTubeWorkbench:
             return {"ok": False, "kind": "cutover_hold", "error": str(error)}
 
     def _dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability == "connection.disconnect":
+            self.cutover.invalidate_validation()
         if self.managed_content and capability in {
             "session_cookies.replace", "session_cookies.test",
             "connection.migrate_credentials", "connection.configure", "connection.authorize",
@@ -790,7 +953,7 @@ def attach_youtube(app: FastAPI, manager: Any) -> None:
     @app.post("/v1/youtube/capability")
     def capability(request: CapabilityRequest, response: Response) -> dict[str, Any]:
         # Browser pixels can contain a Google challenge; never cache handoff responses.
-        if request.capability.startswith("content_session."):
+        if request.capability.startswith("content_session.") or request.capability == "cutover.validate":
             response.headers["Cache-Control"] = "no-store"
         try:
             workbench = start_youtube(app, manager)
