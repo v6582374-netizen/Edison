@@ -93,12 +93,15 @@ class Desktop:
                 for row in range(height):
                     offset = ((y + row) * self.width + x) * 4
                     self.pixels[offset : offset + width * 4] = self._read(width * 4)
-            raw = bytearray()
+            stride = self.width * 3 + 1
+            raw = bytearray(stride * self.height)
             for y in range(self.height):
-                raw.append(0)
                 row = self.pixels[y * self.width * 4 : (y + 1) * self.width * 4]
-                for x in range(0, len(row), 4):
-                    raw.extend((row[x + 2], row[x + 1], row[x]))
+                start = y * stride + 1
+                end = (y + 1) * stride
+                raw[start:end:3] = row[2::4]
+                raw[start + 1:end:3] = row[1::4]
+                raw[start + 2:end:3] = row[0::4]
 
             def chunk(kind, payload):
                 return (
