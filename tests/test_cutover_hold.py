@@ -144,3 +144,59 @@ def test_storage_failure_during_drain_wakes_shutdown_and_never_reports_ready(tmp
     restarted = CutoverHold(LocalWorkspace.open(tmp_path))
     assert restarted.status()['held']
     assert restarted.status()['state'] == 'aborted'
+
+
+@pytest.mark.parametrize('boundary', ['verify', 'prepare_workers'])
+@pytest.mark.parametrize('clock_source', ['wall', 'monotonic'])
+def test_completion_crossing_maintenance_deadline_keeps_hold_and_cancels_pending_workers(
+        tmp_path, monkeypatch, boundary, clock_source):
+    from types import SimpleNamespace
+    from youtube_strataread.workbench import cutover
+
+    clock = {'wall': 1000.0, 'monotonic': 3000.0}
+    workspace = LocalWorkspace.open(tmp_path)
+    workspace.now = lambda: clock['wall']
+    monkeypatch.setattr(cutover, 'time', SimpleNamespace(monotonic=lambda: clock['monotonic']))
+    context = {'build': 'fixture-build', 'uid': 1001, 'profile': 'fixture-profile'}
+    hold = CutoverHold(workspace, context=context)
+    hold.begin(threading.Event())
+    hold.observe_drain((), lambda: None)
+    hold.wait_idle()
+    hold.begin_validation(context)
+    # Prerequisite server receipts are supplied through the public hold protocol;
+    # this focused test controls time at its completion callbacks, not a scheduler.
+    with hold.validation_work() as revision:
+        for key in ('official', 'initial', 'closed'):
+            hold.validation_proof(revision, key, {'at': 1000.0})
+    hold.prepare_restart()
+    hold.seal()
+    hold.closed_normally()
+    hold = CutoverHold(workspace, context=context)
+    with hold.validation_work() as revision:
+        for key in ('official', 'restarted'):
+            hold.validation_proof(revision, key, {'at': 1000.0})
+    clock.update(wall=2799.99, monotonic=4799.99)
+    events = []
+
+    def cross_deadline():
+        clock[clock_source] = 2800.01 if clock_source == 'wall' else 4800.01
+
+    def verify_current(proofs):
+        assert {'official', 'initial', 'closed', 'restarted'} <= proofs.keys()
+        if boundary == 'verify':
+            cross_deadline()
+
+    def prepare_workers():
+        events.append('prepared')
+        if boundary == 'prepare_workers':
+            cross_deadline()
+        return lambda: events.append('released'), lambda: events.append('cancelled')
+
+    with pytest.raises(CutoverBlocked):
+        hold.complete_validation(verify_current, prepare_workers)
+    assert events == ([] if boundary == 'verify' else ['prepared', 'cancelled'])
+    state = hold.status()
+    assert state['held'] and state['state'] == 'aborted'
+    assert state['deadline_at'] == 2800.0
+    restarted = CutoverHold(LocalWorkspace.open(tmp_path), context=context)
+    assert restarted.status()['held'] and restarted.status()['state'] == 'aborted'

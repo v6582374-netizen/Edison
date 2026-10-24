@@ -1,40 +1,70 @@
 import { test, expect } from './fixtures';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmod, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type { Page, APIRequestContext } from '@playwright/test';
 
-test('formal cutover validation keeps admission closed through proved connection checks and clean restart', async ({page, request}, testInfo) => {
-  test.setTimeout(120000);
+/** This file's scenarios share transport/process setup; assertions stay local. */
+async function cutoverHarness(page: Page, request: APIRequestContext) {
   const root = await mkdtemp(join(tmpdir(), 'edison-cutover-'));
   let backend: ChildProcess | undefined;
   let url = '';
-  await writeFile(join(root,'clock'),String(Date.now()/1000));
-  async function start() {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py',root], {
-      cwd:resolve('../..'),env:{...process.env,PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe'],
+  await writeFile(join(root, 'clock'), String(Date.now() / 1000));
+  async function start(bootstrap?: string) {
+    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py', root], {
+      cwd: resolve('../..'), stdio: ['ignore', 'pipe', 'pipe'],
+      env: {...process.env, ...(bootstrap ? {EDISON_CUTOVER_STARTED_AT: bootstrap} : {}),
+        PYTHONPATH: `${resolve('../..')}:${resolve('../../src')}`},
     });
-    let logs=''; backend.stderr!.on('data',data=>logs+=data);
-    const port=await new Promise<number>((done,reject)=>{
-      let output='';const timer=setTimeout(()=>reject(new Error(logs||'backend timeout')),20000);
-      backend!.stdout!.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);done(JSON.parse(line).port);}});
-      backend!.once('exit',()=>{clearTimeout(timer);reject(new Error(logs));});
+    let logs = ''; backend.stderr!.on('data', data => logs += data);
+    const port = await new Promise<number>((done, reject) => {
+      let output = ''; const timer = setTimeout(() => reject(new Error(logs || 'backend timeout')), 20000);
+      backend!.stdout!.on('data', data => {
+        output += data; const line = output.split('\n').find(line => line.startsWith('{"port":'));
+        if (line) { clearTimeout(timer); done(JSON.parse(line).port); }
+      });
+      backend!.once('exit', () => { clearTimeout(timer); reject(new Error(logs)); });
     });
-    url=`http://127.0.0.1:${port}`;
-    await expect.poll(async()=>{try{return(await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
+    url = `http://127.0.0.1:${port}`;
+    await expect.poll(async () => { try { return (await request.get(url + '/v1/health')).status(); } catch { return 0; } }).toBe(200);
   }
-  async function stop(){if(backend?.exitCode===null){const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));backend.kill('SIGTERM');await ended;}}
-  const raw = (capability:string,args={})=>page.evaluate(async({capability,args})=>(await fetch('/v1/youtube/capability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,arguments:args})})).json(),{capability,args});
-  const call = async(capability:string,args={})=>{const value=await raw(capability,args);expect(value.ok,value.error).toBe(true);return value.result;};
+  async function stop(signal: NodeJS.Signals = 'SIGTERM') {
+    if (backend?.exitCode === null) {
+      const ended = new Promise<void>(done => backend!.once('exit', () => done()));
+      backend.kill(signal); await ended;
+    }
+  }
+  async function open() {
+    await page.route('**/v1/youtube/capability', async route => {
+      const response = await route.fetch({url: url + '/v1/youtube/capability',
+        headers: {...route.request().headers(), 'X-OpenWorker-Token': 'content-e2e'}}).catch(() => null);
+      if (response) await route.fulfill({response}); else await route.abort('connectionrefused');
+    });
+    await page.addInitScript(() => localStorage.setItem('openworker.lang', 'zh'));
+    await page.goto('/'); await page.getByTestId('nav-youtube').click();
+  }
+  const raw = (capability: string, args = {}) => page.evaluate(async ({capability, args}) =>
+    (await fetch('/v1/youtube/capability', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({capability, arguments: args})})).json(), {capability, args});
+  const call = async (capability: string, args = {}) => {
+    const value = await raw(capability, args); expect(value.ok, value.error).toBe(true); return value.result;
+  };
+  async function cleanup() {
+    await rm(join(root, 'readonly-storage'), {force: true});
+    await rm(join(root, 'hold-subscriptions'), {force: true});
+    await page.unrouteAll({behavior: 'wait'}); await stop(); await rm(root, {recursive: true, force: true});
+  }
+  return {root, start, stop, open, raw, call, cleanup};
+}
+
+test('formal cutover validation keeps admission closed through proved connection checks and clean restart', async ({page, request}, testInfo) => {
+  test.setTimeout(120000);
+  const {root, start, stop, open, raw, call, cleanup} = await cutoverHarness(page, request);
   try {
     await writeFile(join(root,'subscription-videos.json'), JSON.stringify(['automatic01']));
     await start();
-    await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
-      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
-    });
-    await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
-    await page.goto('/');await page.getByTestId('nav-youtube').click();
+    await open();
     await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
     await call('cutover.begin');
     await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
@@ -99,41 +129,17 @@ test('formal cutover validation keeps admission closed through proved connection
     expect((await call('acceptance.begin')).state).toBe('observing');
 
 
-  } finally {await rm(join(root,'readonly-storage'),{force:true});await page.unrouteAll({behavior:'wait'});await stop();await rm(root,{recursive:true,force:true});}
+  } finally {await cleanup();}
 });
 
-test('maintenance bootstrap precedes workers and never renews its original deadline', async ({page, request}, testInfo) => {
+test('maintenance bootstrap precedes workers and never renews its original deadline', async ({page, request}) => {
   test.setTimeout(120000);
-  const root = await mkdtemp(join(tmpdir(), 'edison-cutover-'));
-  let backend: ChildProcess | undefined;
-  let url = '';
+  const {root, start, stop, open, raw, call, cleanup} = await cutoverHarness(page, request);
   let bootstrap: string | undefined;
-  await writeFile(join(root,'clock'),String(Date.now()/1000));
-  async function start() {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py',root], {
-      cwd:resolve('../..'),env:{...process.env, ...(bootstrap ? {EDISON_CUTOVER_STARTED_AT:bootstrap} : {}),PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe'],
-    });
-    let logs=''; backend.stderr!.on('data',data=>logs+=data);
-    const port=await new Promise<number>((done,reject)=>{
-      let output='';const timer=setTimeout(()=>reject(new Error(logs||'backend timeout')),20000);
-      backend!.stdout!.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);done(JSON.parse(line).port);}});
-      backend!.once('exit',()=>{clearTimeout(timer);reject(new Error(logs));});
-    });
-    url=`http://127.0.0.1:${port}`;
-    await expect.poll(async()=>{try{return(await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
-  }
-  async function stop(){if(backend?.exitCode===null){const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));backend.kill('SIGTERM');await ended;}}
-  const raw = (capability:string,args={})=>page.evaluate(async({capability,args})=>(await fetch('/v1/youtube/capability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,arguments:args})})).json(),{capability,args});
-  const call = async(capability:string,args={})=>{const value=await raw(capability,args);expect(value.ok,value.error).toBe(true);return value.result;};
   try {
     await writeFile(join(root,'model-unavailable'),'');
-    await start();
-    await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
-      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
-    });
-    await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
-    await page.goto('/');await page.getByTestId('nav-youtube').click();
+    await start(bootstrap);
+    await open();
     await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
     await call('activity.resume');
     await call('manual.submit',{url:'https://youtu.be/abcdefghijk',request_id:'before-maintenance'});
@@ -141,7 +147,7 @@ test('maintenance bootstrap precedes workers and never renews its original deadl
     const requests=await readFile(join(root,'google-requests.jsonl'),'utf8');
     const started=Number(await readFile(join(root,'clock'),'utf8'))-100;
     bootstrap=String(started);
-    await start();
+    await start(bootstrap);
     await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
     const held=await call('cutover.status');
     expect(held.held).toBe(true);expect(held.deadline_at).toBe(started+1800);
@@ -152,45 +158,21 @@ test('maintenance bootstrap precedes workers and never renews its original deadl
     await writeFile(join(root,'clock'),String(started+1801));
     expect((await call('cutover.status')).state).toBe('aborted');
     expect((await raw('cutover.validation.begin',{expected_client_id:'fixture'})).ok).toBe(false);
-    await stop();bootstrap=String(started+1801);await start();
+    await stop();bootstrap=String(started+1801);await start(bootstrap);
     const retried=await call('cutover.begin');
     expect(retried.state).toBe('aborted');expect(retried.deadline_at).toBe(started+1800);
     expect((await call('activity.snapshot')).queued).toBe(1);
     expect(await readFile(join(root,'google-requests.jsonl'),'utf8')).toBe(requests);
-  } finally {await rm(join(root,'readonly-storage'),{force:true});await page.unrouteAll({behavior:'wait'});await stop();await rm(root,{recursive:true,force:true});}
+  } finally {await cleanup();}
 });
 
-test('validation withdrawal and deadline reject stale proofs and unplanned restart', async ({page, request}, testInfo) => {
+test('validation withdrawal and deadline reject stale proofs and unplanned restart', async ({page, request}) => {
   test.setTimeout(120000);
-  const root = await mkdtemp(join(tmpdir(), 'edison-cutover-'));
-  let backend: ChildProcess | undefined;
-  let url = '';
-  await writeFile(join(root,'clock'),String(Date.now()/1000));
-  async function start() {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py',root], {
-      cwd:resolve('../..'),env:{...process.env,PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe'],
-    });
-    let logs=''; backend.stderr!.on('data',data=>logs+=data);
-    const port=await new Promise<number>((done,reject)=>{
-      let output='';const timer=setTimeout(()=>reject(new Error(logs||'backend timeout')),20000);
-      backend!.stdout!.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);done(JSON.parse(line).port);}});
-      backend!.once('exit',()=>{clearTimeout(timer);reject(new Error(logs));});
-    });
-    url=`http://127.0.0.1:${port}`;
-    await expect.poll(async()=>{try{return(await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
-  }
-  async function stop(){if(backend?.exitCode===null){const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));backend.kill('SIGTERM');await ended;}}
-  const raw = (capability:string,args={})=>page.evaluate(async({capability,args})=>(await fetch('/v1/youtube/capability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,arguments:args})})).json(),{capability,args});
-  const call = async(capability:string,args={})=>{const value=await raw(capability,args);expect(value.ok,value.error).toBe(true);return value.result;};
+  const {root, start, stop, open, raw, call, cleanup} = await cutoverHarness(page, request);
   try {
     await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
     await start();
-    await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
-      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
-    });
-    await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
-    await page.goto('/');await page.getByTestId('nav-youtube').click();
+    await open();
     await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
     await call('cutover.begin');
     await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
@@ -217,40 +199,16 @@ test('validation withdrawal and deadline reject stale proofs and unplanned resta
     await stop();await start();
     expect((await call('cutover.status')).deadline_at).toBe(original.deadline_at);
     expect((await call('connection.status')).authorized).toBe(false);
-  } finally {await rm(join(root,'hold-subscriptions'),{force:true});await page.unrouteAll({behavior:'wait'});await stop();await rm(root,{recursive:true,force:true});}
+  } finally {await cleanup();}
 });
 
-test('validation deadline closes its browser and never releases acquisition', async ({page, request}, testInfo) => {
+test('validation deadline closes its browser and never releases acquisition', async ({page, request}) => {
   test.setTimeout(120000);
-  const root = await mkdtemp(join(tmpdir(), 'edison-cutover-'));
-  let backend: ChildProcess | undefined;
-  let url = '';
-  await writeFile(join(root,'clock'),String(Date.now()/1000));
-  async function start() {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py',root], {
-      cwd:resolve('../..'),env:{...process.env,PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe'],
-    });
-    let logs=''; backend.stderr!.on('data',data=>logs+=data);
-    const port=await new Promise<number>((done,reject)=>{
-      let output='';const timer=setTimeout(()=>reject(new Error(logs||'backend timeout')),20000);
-      backend!.stdout!.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);done(JSON.parse(line).port);}});
-      backend!.once('exit',()=>{clearTimeout(timer);reject(new Error(logs));});
-    });
-    url=`http://127.0.0.1:${port}`;
-    await expect.poll(async()=>{try{return(await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
-  }
-  async function stop(){if(backend?.exitCode===null){const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));backend.kill('SIGTERM');await ended;}}
-  const raw = (capability:string,args={})=>page.evaluate(async({capability,args})=>(await fetch('/v1/youtube/capability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,arguments:args})})).json(),{capability,args});
-  const call = async(capability:string,args={})=>{const value=await raw(capability,args);expect(value.ok,value.error).toBe(true);return value.result;};
+  const {root, start, open, raw, call, cleanup} = await cutoverHarness(page, request);
   try {
     await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
     await start();
-    await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
-      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
-    });
-    await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
-    await page.goto('/');await page.getByTestId('nav-youtube').click();
+    await open();
     await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
     await call('cutover.begin');
     await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
@@ -266,40 +224,16 @@ test('validation deadline closes its browser and never releases acquisition', as
     expect((await raw('cutover.complete',{official:true,restart:true})).ok).toBe(false);
     expect((await raw('cutover.validate',{capability:'connection.check'})).kind).toBe('cutover_hold');
     expect((await raw('manual.submit',{url:'https://youtu.be/abcdefghijk',request_id:'still-blocked'})).kind).toBe('cutover_hold');
-  } finally {await rm(join(root,'readonly-storage'),{force:true});await page.unrouteAll({behavior:'wait'});await stop();await rm(root,{recursive:true,force:true});}
+  } finally {await cleanup();}
 });
 
-test('unplanned validation restart aborts and retains the original deadline', async ({page, request}, testInfo) => {
+test('unplanned validation restart aborts and retains the original deadline', async ({page, request}) => {
   test.setTimeout(120000);
-  const root = await mkdtemp(join(tmpdir(), 'edison-cutover-'));
-  let backend: ChildProcess | undefined;
-  let url = '';
-  await writeFile(join(root,'clock'),String(Date.now()/1000));
-  async function start() {
-    backend = spawn(resolve('../../.venv/bin/python'), ['surfaces/gui/e2e/youtube-content-server.py',root], {
-      cwd:resolve('../..'),env:{...process.env,PYTHONPATH:`${resolve('../..')}:${resolve('../../src')}`},stdio:['ignore','pipe','pipe'],
-    });
-    let logs=''; backend.stderr!.on('data',data=>logs+=data);
-    const port=await new Promise<number>((done,reject)=>{
-      let output='';const timer=setTimeout(()=>reject(new Error(logs||'backend timeout')),20000);
-      backend!.stdout!.on('data',data=>{output+=data;const line=output.split('\n').find(line=>line.startsWith('{"port":'));if(line){clearTimeout(timer);done(JSON.parse(line).port);}});
-      backend!.once('exit',()=>{clearTimeout(timer);reject(new Error(logs));});
-    });
-    url=`http://127.0.0.1:${port}`;
-    await expect.poll(async()=>{try{return(await request.get(url+'/v1/health')).status();}catch{return 0;}}).toBe(200);
-  }
-  async function stop(){if(backend?.exitCode===null){const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));backend.kill('SIGTERM');await ended;}}
-  const raw = (capability:string,args={})=>page.evaluate(async({capability,args})=>(await fetch('/v1/youtube/capability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,arguments:args})})).json(),{capability,args});
-  const call = async(capability:string,args={})=>{const value=await raw(capability,args);expect(value.ok,value.error).toBe(true);return value.result;};
+  const {root, start, stop, open, raw, call, cleanup} = await cutoverHarness(page, request);
   try {
     await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
     await start();
-    await page.route('**/v1/youtube/capability',async route=>{
-      const response=await route.fetch({url:url+'/v1/youtube/capability',headers:{...route.request().headers(),'X-OpenWorker-Token':'content-e2e'}}).catch(()=>null);
-      if(response)await route.fulfill({response});else await route.abort('connectionrefused');
-    });
-    await page.addInitScript(()=>localStorage.setItem('openworker.lang','zh'));
-    await page.goto('/');await page.getByTestId('nav-youtube').click();
+    await open();
     await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
     await call('cutover.begin');
     await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
@@ -307,13 +241,12 @@ test('unplanned validation restart aborts and retains the original deadline', as
     await call('cutover.validation.begin',{expected_client_id:'fixture'});
     const original=await call('cutover.status');
     await call('cutover.validate',{capability:'content_session.open'});
-    const ended=new Promise<void>(done=>backend!.once('exit',()=>done()));
-    backend!.kill('SIGKILL');await ended;await start();
+    await stop('SIGKILL');await start();
     expect((await call('cutover.status')).state).toBe('aborted');
     expect((await call('cutover.status')).deadline_at).toBe(original.deadline_at);
     expect((await raw('cutover.prepare_restart')).ok).toBe(false);
     expect((await raw('cutover.complete',{official:true,restart:true})).ok).toBe(false);
     expect((await raw('cutover.validate',{capability:'connection.check'})).kind).toBe('cutover_hold');
     expect((await raw('manual.submit',{url:'https://youtu.be/abcdefghijk',request_id:'still-blocked'})).kind).toBe('cutover_hold');
-  } finally {await rm(join(root,'readonly-storage'),{force:true});await page.unrouteAll({behavior:'wait'});await stop();await rm(root,{recursive:true,force:true});}
+  } finally {await cleanup();}
 });

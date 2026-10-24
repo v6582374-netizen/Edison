@@ -203,16 +203,23 @@ class CutoverHold:
             if not validation.get("restarted") or not {"official", "initial", "closed", "restarted"} <= proofs.keys():
                 raise CutoverBlocked("缺少重启后的真实订阅与字幕获取证据；采集继续暂停。")
             verify_current(proofs)
+            self._require_validation_idle()
             # Start replacement threads behind a gate before making the durable
             # release. Thread allocation or storage failure leaves the hold set.
             release, cancel = prepare_workers()
-            previous = copy.deepcopy(self._state)
+            previous = None
             try:
+                # Neither filesystem verification nor allocating replacement
+                # threads may extend the original wall/monotonic deadline.
+                # Keep an expired aborted state rather than rolling it back.
+                self._require_validation_idle()
+                previous = copy.deepcopy(self._state)
                 self._state.update(held=False, state="complete", completed_at=self.workspace.now(),
                                    reason="正式验证已通过；按当前用户许可恢复处理，等待持续观察验收。")
                 self._save()
             except Exception:
-                self._state = previous
+                if previous is not None:
+                    self._state = previous
                 cancel()
                 raise
             release()
