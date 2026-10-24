@@ -310,6 +310,11 @@ class AcceptanceRecord:
         self.restart_period(f"{label}{'重新连接' if reason == 'reconnect' else '首次连接'}")
         return reason
 
+    def connection_verified(self, identity: str) -> None:
+        """A reused grant can establish first connection; checking is no reconnect."""
+        if identity not in self._state().get("connected", []):
+            self.connected(identity)
+
     def record_reading(self, arguments: dict) -> dict:
         try:
             baseline = float(arguments["baseline_p95_ms"])

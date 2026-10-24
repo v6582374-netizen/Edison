@@ -69,6 +69,7 @@ export function YouTubeView({
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
   const [message, setMessage] = useState("");
+  const [cutoverClient, setCutoverClient] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -412,8 +413,30 @@ export function YouTubeView({
           <p>{yt("文稿 {{documents}} 篇 · 版本 {{versions}} 个 · 字幕 {{transcripts}} 份 · 完整译文 {{translations}} 份", {documents: activity.cutover.backup.summary.documents, versions: activity.cutover.backup.summary.manuscript_versions, transcripts: activity.cutover.backup.summary.transcripts, translations: activity.cutover.backup.translations})}</p>
           <p>{yt("认证资料单独管理，未进入备份。")}</p>
         </> : <p>{yt("尚无一致性备份")}</p>}
-        <button className="yp-btn" onClick={() => void call("cutover.migrate").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("执行历史迁移")}</button>
-        <button className="yp-btn" onClick={() => void call("cutover.backup").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("取得一致性备份并验证恢复")}</button>
+        <button className="yp-btn" disabled={activity.cutover.state === "validating"} onClick={() => void call("cutover.migrate").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("执行历史迁移")}</button>
+        <button className="yp-btn" disabled={activity.cutover.state === "validating"} onClick={() => void call("cutover.backup").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("取得一致性备份并验证恢复")}</button>
+        {activity.cutover.state === "ready" && <>
+          <label>{yt("正式授权应用标识")}
+            <input value={cutoverClient} onChange={event => setCutoverClient(event.target.value)} autoComplete="off" />
+          </label>
+          <button className="yp-btn" disabled={!cutoverClient.trim() || !activity.cutover.backup?.verified || !activity.cutover.migration?.finished}
+            onClick={() => void call("cutover.validation.begin", {expected_client_id: cutoverClient.trim()}).then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("开始正式连接验证")}</button>
+        </>}
+        {activity.cutover.state === "validating" && <>
+          <p>{yt("正式连接验证中；自动与手动处理继续暂停。")}</p>
+          <p>{yt("订阅刷新：{{official}} · 同账号字幕：{{initial}} · 关闭浏览器后字幕：{{closed}} · 重启后字幕：{{restarted}}", {
+            official: activity.cutover.validation?.proofs.official ? yt("已通过") : yt("待验证"),
+            initial: activity.cutover.validation?.proofs.initial ? yt("已通过") : yt("待验证"),
+            closed: activity.cutover.validation?.proofs.closed ? yt("已通过") : yt("待验证"),
+            restarted: activity.cutover.validation?.proofs.restarted ? yt("已通过") : yt("待验证"),
+          })}</p>
+          <button className="yp-btn" onClick={() => void openPanel("connection")}>{yt("打开正式连接验证")}</button>
+          <p>{yt("完成内容登录与同账号确认后，关闭服务器浏览器并再次检查同一视频的字幕。准备重启后由维护者正常重启服务，原截止时间不会延长。")}</p>
+          <button className="yp-btn" disabled={activity.cutover.validation?.restart_requested || !activity.cutover.validation?.proofs.official || !activity.cutover.validation?.proofs.initial || !activity.cutover.validation?.proofs.closed}
+            onClick={() => void call("cutover.prepare_restart").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("准备计划重启验证")}</button>
+          <button className="yp-btn" disabled={!activity.cutover.validation?.proofs.official || !activity.cutover.validation?.proofs.restarted}
+            onClick={() => void call("cutover.complete").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("完成正式验证并恢复当前许可的处理")}</button>
+        </>}
         {activity.cutover.state !== "aborted" && <button className="yp-btn" onClick={() => void call("cutover.abort").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("中止切换并保持采集暂停")}</button>}
         </>}
       </section>}
@@ -918,8 +941,8 @@ export function YouTubeView({
           )}
         </>)}
         {panel === "connection" && (<>
-          {connection && <OfficialAuthorization connection={connection} onChange={value => { setConnection(value); void preferences(); }} />}
-          <YouTubeSessionSettings key={contentRevision} />
+          {connection && <OfficialAuthorization connection={connection} maintenance={activity?.cutover?.state === "validating"} onChange={value => { setConnection(value); void preferences(); }} />}
+          <YouTubeSessionSettings key={`${contentRevision}-${activity?.cutover?.state}`} maintenance={activity?.cutover?.state === "validating"} />
           {connection?.managed_content ? (
             <section aria-label={yt("断开 YouTube")}>
               <p>{yt("断开会同时停止本实例使用 Google 官方授权和 YouTube 内容会话；已有资料、阅读记录与 Auto Update 选择保留。")}</p>

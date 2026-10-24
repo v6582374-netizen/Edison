@@ -492,6 +492,38 @@ class ConnectionService:
                 self._connected(True)
             return self.refresh_subscription_sources()
 
+    def check_cutover_connection(self, expected_client_id: str) -> ConnectionStatus:
+        """Actual refresh and subscription I/O, never a persisted capability flag."""
+        with self._operation() as generation:
+            if self._require_configuration().client_id != expected_client_id:
+                raise ConnectionError("OAuth client 不匹配；保留当前连接，正式验证未通过。")
+            try:
+                self.api.ensure_available(grant_check=True)
+                credentials = self._active_credentials(generation, force_refresh=True)
+                sources = self._list_subscriptions(credentials, generation, grant_check=True)
+                if not sources:
+                    raise ConnectionError("订阅读取成功但为空，尚不能证明正式订阅连接。")
+                with self._publication(generation):
+                    self.workspace.replace_subscription_sources(sources)
+                    self._connected(True)
+                    self._subscription_success()
+                return self.status()
+            except AuthorizationRequired as error:
+                with self._publication(generation):
+                    self.api.block('authorization')
+                    self._credentials = None
+                    self.workspace.set_meta("youtube_oauth_authorized", "0")
+                    self.workspace.set_meta("youtube_reconnect_required", "1")
+                    self._failed(error, generation)
+                raise
+            except (ConnectionError, VaultError) as error:
+                self._failed(error, generation)
+                raise
+
+    def matches_cutover_client(self, expected_client_id: str) -> bool:
+        with self._identity_lock:
+            return self._require_configuration().client_id == expected_client_id
+
     def refresh_subscription_sources(self) -> ConnectionStatus:
         requested = time.monotonic()
         with self._operation() as generation:

@@ -38,6 +38,16 @@ from youtube_strataread.workbench.resource_governor import LinuxResources, Resou
 from youtube_strataread.workbench.caption_process import CaptionProcess
 from youtube_strataread.workbench.content_session import ContentSessionError
 
+# Fault at the real SQLite boundary; host admission and state remain real.
+import sqlite3
+_sqlite_connect = sqlite3.connect
+def sqlite_connect(*args, **kwargs):
+    database = _sqlite_connect(*args, **kwargs)
+    if (root / 'readonly-storage').exists():
+        database.execute('PRAGMA query_only=ON')
+    return database
+sqlite3.connect = sqlite_connect
+
 
 def resource_observation(self):
     path = root / "resources.json"

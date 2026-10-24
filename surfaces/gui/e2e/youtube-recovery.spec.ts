@@ -236,7 +236,7 @@ test('historical rollback refusal and current-program restart keep the latest li
     const library = join(root, 'library');
     const compatible = d.recovery('check-program', resolve('../..'), library);
     expect(compatible.code).toBe(0);
-    expect(compatible.output).toMatchObject({compatible: true, program_contract: 1, library_contract: 1});
+    expect(compatible.output).toMatchObject({compatible: true, program_contract: 2, library_contract: 2});
     expect(compatible.output.note).toContain('不包含后端程序、资料或凭据回退');
     const legacy = join(root, 'program-02d2c84', 'src', 'youtube_strataread', 'workbench');
     await mkdir(legacy, {recursive: true});
@@ -265,7 +265,7 @@ test('historical rollback refusal and current-program restart keep the latest li
     await d.advance(600);
     expect((await d.call('activity.snapshot')).runtime.worker_alive).toBe(false);
     await d.stop();
-    expect(d.recovery('check-program', resolve('../..'), library).output.library_contract).toBe(1);
+    expect(d.recovery('check-program', resolve('../..'), library).output.library_contract).toBe(2);
 
     // Restart evidence only: no historical released backend declares this contract.
     // The current program runs on the same latest library in place.

@@ -2568,6 +2568,16 @@ export async function youtubeCapability<T>(capability: string, arguments_: Recor
   return data.result as T;
 }
 
+/** The maintainer explicitly enters validation; ordinary callers retain the hold. */
+export function youtubeValidationCapability<T>(capability: string, arguments_: Record<string, unknown> = {}): Promise<T> {
+  if (capability.endsWith(".status") || capability === "connection.disconnect")
+    return youtubeCapability<T>(capability, arguments_);
+  return youtubeCapability<T>("cutover.validate", {
+    capability: capability === "connection.refresh_subscriptions" ? "connection.check" : capability,
+    arguments: arguments_,
+  });
+}
+
 
 // Curriculum's reading surface never receives source transcript or media paths.
 export interface ClassroomDocumentSummary {

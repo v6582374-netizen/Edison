@@ -74,7 +74,8 @@ export type Acceptance = {
 export type Activity = {
   health?: Health;
   acceptance?: Acceptance;
-  cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "aborted" | "incompatible"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
+  cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "validating" | "complete" | "aborted" | "incompatible"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
+    validation?: {restart_requested?: boolean; restarted?: boolean; proofs: Record<string, unknown>};
     backup?: {created_at: number; verified: boolean; translations: number;
       summary: {documents: number; manuscript_versions: number; transcripts: number}} | null;
     migration?: {stage: string; stage_label: string; finished: boolean; client_match: boolean | null; permission_error: boolean; identity_withdrawn: boolean;
