@@ -1,5 +1,6 @@
 """Atomic admission contracts supplement the real Web/host acceptance test."""
 import threading
+import json
 
 import pytest
 
@@ -146,7 +147,7 @@ def test_storage_failure_during_drain_wakes_shutdown_and_never_reports_ready(tmp
     assert restarted.status()['state'] == 'aborted'
 
 
-@pytest.mark.parametrize('boundary', ['verify', 'prepare_workers'])
+@pytest.mark.parametrize('boundary', ['verify', 'prepare_workers', 'save'])
 @pytest.mark.parametrize('clock_source', ['wall', 'monotonic'])
 def test_completion_crossing_maintenance_deadline_keeps_hold_and_cancels_pending_workers(
         tmp_path, monkeypatch, boundary, clock_source):
@@ -192,6 +193,14 @@ def test_completion_crossing_maintenance_deadline_keeps_hold_and_cancels_pending
             cross_deadline()
         return lambda: events.append('released'), lambda: events.append('cancelled')
 
+    original_set_meta = workspace.set_meta
+
+    def delayed_completion_write(key, value):
+        if key == 'youtube_cutover' and json.loads(value).get('state') == 'complete' and boundary == 'save':
+            cross_deadline()
+        return original_set_meta(key, value)
+
+    monkeypatch.setattr(workspace, 'set_meta', delayed_completion_write)
     with pytest.raises(CutoverBlocked):
         hold.complete_validation(verify_current, prepare_workers)
     assert events == ([] if boundary == 'verify' else ['prepared', 'cancelled'])
