@@ -152,3 +152,75 @@ with Desktop(Path(sys.argv[1])) as desktop:
         temporary.cleanup()
     thread.join(3)
     assert not thread.is_alive()
+
+
+def test_desktop_png_preserves_rgb_channels_rows_and_partial_updates():
+    # Hand-worked BGRX pixels, including ignored X bytes, over a real RFB socket.
+    pixels = bytes.fromhex("0000ff63 00ff0050 ff00004d 00000037 ffffff0b 56341209")
+    expected_rows = (
+        bytes.fromhex("00 ff0000 00ff00 0000ff 00 000000 ffffff 123456"),
+        bytes.fromhex("00 ff0000 ffff00 0000ff 00 000000 00ffff 123456"),
+    )
+    # Golden PNG bytes for the literal scanlines above, including CRCs.
+    golden = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAFklEQVR4nGP4z8DAAMMM"
+        "////FzIJAwA8zAaX1f1XXAAAAABJRU5ErkJggg==",
+        "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAFklEQVR4nGP4z8DwH4gZ"
+        "QBjEFDIJAwBGwgaXPFDP8QAAAABJRU5ErkJggg==",
+    )
+    failures = []
+
+    def read(sock, size):
+        data = bytearray()
+        while len(data) < size:
+            piece = sock.recv(size - len(data))
+            if not piece:
+                raise OSError("closed fixture peer")
+            data.extend(piece)
+        return bytes(data)
+
+    with tempfile.TemporaryDirectory(prefix="ed-rfb-", dir="/tmp") as directory:
+        path = Path(directory) / "display.sock"
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(path))
+            listener.listen()
+            listener.settimeout(5)
+
+            def serve():
+                try:
+                    with listener.accept()[0] as sock:
+                        sock.settimeout(5)
+                        sock.sendall(b"RFB 003.008\n")
+                        assert read(sock, 12) == b"RFB 003.008\n"
+                        sock.sendall(b"\x01\x01")
+                        assert read(sock, 1) == b"\x01"
+                        sock.sendall(bytes(4))
+                        assert read(sock, 1) == b"\x01"
+                        sock.sendall(struct.pack("!HH", 3, 2) + bytes(16) + bytes(4))
+                        read(sock, 20)
+                        read(sock, 8)
+                        for rectangle in (
+                            struct.pack("!HHHHi", 0, 0, 3, 2, 0) + pixels,
+                            struct.pack("!HHHHi", 1, 0, 1, 2, 0) + bytes.fromhex("00ffff55 ffff0066"),
+                            b"",  # No changed rectangle must preserve the last image.
+                        ):
+                            assert read(sock, 10) == struct.pack("!BBHHHH", 3, 0, 0, 0, 3, 2)
+                            sock.sendall(b"\0\0" + struct.pack("!H", bool(rectangle)) + rectangle)
+                except BaseException as error:
+                    failures.append(error)
+
+            thread = threading.Thread(target=serve, daemon=True)
+            thread.start()
+            try:
+                with Desktop(path) as desktop:
+                    for index in (0, 1, 1):
+                        frame = desktop.screen()
+                        assert (frame["width"], frame["height"]) == (3, 2)
+                        png = base64.b64decode(frame["image"])
+                        length = struct.unpack("!I", png[33:37])[0]
+                        assert zlib.decompress(png[41:41 + length]) == expected_rows[index]
+                        assert png == base64.b64decode(golden[index])
+            finally:
+                thread.join(6)
+            assert not thread.is_alive()
+            assert not failures
