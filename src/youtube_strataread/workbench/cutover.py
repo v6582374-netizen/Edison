@@ -217,6 +217,13 @@ class CutoverHold:
                 self._state.update(held=False, state="complete", completed_at=self.workspace.now(),
                                    reason="正式验证已通过；按当前用户许可恢复处理，等待持续观察验收。")
                 self._save()
+                if self._deadline_expired():
+                    # A commit can itself wait for storage. Restore admission
+                    # before publishing its expiry; pending workers stay gated.
+                    self._state = previous
+                    previous = None
+                    self.status()
+                    raise CutoverBlocked("正式验证保存已超过原维护截止时间；采集继续暂停。")
             except Exception:
                 if previous is not None:
                     self._state = previous
@@ -261,10 +268,14 @@ class CutoverHold:
                 self._save()
             return self.status()
 
+    def _deadline_expired(self):
+        return (self.workspace.now() >= self._state["deadline_at"]
+                or (self._monotonic_deadline is not None
+                    and time.monotonic() >= self._monotonic_deadline))
+
     def status(self):
         with self._lock:
-            expired = not self._incompatible and self._state.get("held") and (self.workspace.now() >= self._state["deadline_at"]
-                or (self._monotonic_deadline is not None and time.monotonic() >= self._monotonic_deadline))
+            expired = not self._incompatible and self._state.get("held") and self._deadline_expired()
             if expired and self._state["state"] != "aborted":
                 self._state.update(state="aborted", reason="30 分钟内未完成安全收尾与正式验证，已中止切换；在途工作继续保存，采集保持暂停。")
                 self._save()
