@@ -12,6 +12,7 @@ import copy
 import math
 import threading
 import time
+import uuid
 from contextlib import contextmanager, suppress
 
 from youtube_strataread.workbench.youtube_api import ConnectionError
@@ -28,8 +29,10 @@ class CutoverHold:
         self._lock = threading.RLock()
         self._local = threading.local()
         self._condition = threading.Condition(self._lock)
+        self._maintenance_lock = threading.RLock()
         self._closing = False
         self._active = 0
+        self._handoff_active = False
         self._drain_closing = False
         self._drain_failed = False
         self._generation = 0
@@ -131,19 +134,30 @@ class CutoverHold:
         with self._lock:
             if self.status().get("state") != "ready" or self.quiescent() is None:
                 raise CutoverBlocked("必须先等待所有写者结束，再开始正式验证。")
-            self._state.update(state="validating", reason="正式连接验证中；自动与手动处理继续暂停。",
+            self._state.update(state="validating", drained=False, reason="正式连接验证中；自动与手动处理继续暂停。",
                                validation={"context": context, "proofs": {}, "revision": 0})
             self._save()
             return self.status()
 
     @contextmanager
-    def validation_work(self):
+    def validation_work(self, *, maintenance=False):
         """Explicit operator scope; nested connection operations share its lease."""
         with self._lock:
+            def identity():
+                return (self._state.get("attempt_id"), self._state.get("started_at"),
+                        (self._state.get("validation") or {}).get("revision"))
+            observed = identity()
+            if not maintenance:
+                # A short browser-lifecycle pass must not cause a person's
+                # queued input to be rejected as a competing maintenance call.
+                self._condition.wait_for(lambda: not self._handoff_active or self._closing)
+                if observed != identity():
+                    raise CutoverBlocked("切换尝试或连接代次已改变，排队中的旧请求已丢弃。")
             if (not self.validating or self._closing or self._active or self._drain_closing
                     or self._state["validation"].get("restart_requested")):
                 raise CutoverBlocked("正式验证未开始、已中止，或另一操作尚未结束。")
             self._active += 1
+            self._handoff_active = maintenance
             self._generation += 1
             self._local.depth = 1
             revision = self._state["validation"]["revision"]
@@ -153,14 +167,19 @@ class CutoverHold:
             with self._lock:
                 self._local.depth = 0
                 self._active -= 1
+                self._handoff_active = False
                 self._condition.notify_all()
 
     def validation_proof(self, revision, key, value):
         with self._lock:
-            if not self.validating or self._state["validation"]["revision"] != revision:
-                raise CutoverBlocked("连接已变更或切换已中止，旧验证结果已丢弃。")
+            self.assert_validation(revision)
             self._state["validation"]["proofs"][key] = value
             self._save()
+
+    def assert_validation(self, revision):
+        with self._lock:
+            if not self.validating or self._state["validation"]["revision"] != revision:
+                raise CutoverBlocked("连接已变更或切换已中止，旧验证结果已丢弃。")
 
     def reset_validation(self, revision, *, keys=("initial", "closed", "restarted")):
         with self._lock:
@@ -277,6 +296,37 @@ class CutoverHold:
             stop.set()
             return self.status()
 
+    @contextmanager
+    def maintenance_operation(self):
+        # Separate from work leases: backup must still observe quiescent writers.
+        with self._maintenance_lock:
+            yield
+
+    def history(self):
+        return json.loads(self.workspace.meta("youtube_cutover_history") or "[]")
+
+    def new_attempt(self, stop, verify_stopped):
+        with self._maintenance_lock, self._lock:
+            if (self._closing or self.incompatible or self.status().get("state") != "aborted"
+                    or self.quiescent() is None):
+                raise CutoverBlocked("只有已中止且全部写者与浏览器确认结束的尝试，才能开始独立新尝试。")
+            verify_stopped()
+            started_at = self.workspace.now()
+            monotonic_deadline = time.monotonic() + 1800
+            archived_id = self._state.get("attempt_id") or uuid.uuid4().hex
+            replacement = dict(held=True, state="ready", attempt_id=uuid.uuid4().hex,
+                               previous_attempt_id=archived_id, started_at=started_at,
+                               deadline_at=started_at + 1800, drained=True,
+                               reason="已开始独立新尝试；旧尝试完整保留，新备份与连接证明尚未完成，采集继续暂停。")
+            # Until the transaction succeeds, both memory and disk keep the old
+            # attempt, its original deadline, and its current evidence unchanged.
+            self.workspace.archive_cutover_attempt(self._state, replacement, archived_id)
+            self._state = replacement
+            self._monotonic_deadline = monotonic_deadline
+            self._generation += 1
+            stop.set()
+            return self.status()
+
     def abort(self):
         with self._lock:
             if self._state.get("held") and self._state["state"] != "aborted":
@@ -297,6 +347,8 @@ class CutoverHold:
                 self._save()
             status = {**self._state, "active_requests": self._active,
                       "drained": bool(self._state.get("drained")) and self._active == 0}
+            status["previous_attempts"] = [{key: entry["attempt"].get(key) for key in
+                ("started_at", "deadline_at", "state", "reason")} for entry in self.history()]
             if self._incompatible:
                 library, program = self.workspace.newer_data_contract
                 status.update(held=True, state="incompatible", reason=self._incompatible, drained=False,

@@ -41,8 +41,15 @@ from youtube_strataread.workbench.content_session import ContentSessionError
 # Fault at the real SQLite boundary; host admission and state remain real.
 import sqlite3
 _sqlite_connect = sqlite3.connect
+class StorageConnection(sqlite3.Connection):
+    def execute(self, sql, parameters=()):
+        if ((root / 'fail-attempt-replacement').exists() and parameters
+                and parameters[0] == 'youtube_cutover' and len(parameters) > 1
+                and json.loads(parameters[1]).get('previous_attempt_id')):
+            raise sqlite3.OperationalError('controlled replacement failure after archive write')
+        return super().execute(sql, parameters)
 def sqlite_connect(*args, **kwargs):
-    database = _sqlite_connect(*args, **kwargs)
+    database = _sqlite_connect(*args, factory=StorageConnection, **kwargs)
     if (root / 'readonly-storage').exists():
         database.execute('PRAGMA query_only=ON')
     return database
@@ -101,6 +108,15 @@ class Browser:
         counter.write_text(str(count))
         return f'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfixture-session-{count}\n'
     def command(self, command, args):
+        with (root / 'browser-commands.jsonl').open('a') as log:
+            log.write(json.dumps({'command': command})+'\n')
+        if command == 'screen' and (root / 'screen-hold').exists():
+            (root / 'screen-held').touch()
+            deadline = time.monotonic() + 30
+            while (root / 'screen-hold').exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+        if command == 'screen' and (root / 'screen-fails').exists():
+            raise ContentSessionError('maintenance', '服务器登录画面暂不可用。')
         if command == 'text':
             (root / 'browser-input').write_text(args['text'])
         if command == 'click':

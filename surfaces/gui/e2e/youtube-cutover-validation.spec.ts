@@ -53,9 +53,24 @@ async function cutoverHarness(page: Page, request: APIRequestContext) {
   async function cleanup() {
     await rm(join(root, 'readonly-storage'), {force: true});
     await rm(join(root, 'hold-subscriptions'), {force: true});
+    await rm(join(root, 'screen-hold'), {force: true});
     await page.unrouteAll({behavior: 'wait'}); await stop(); await rm(root, {recursive: true, force: true});
   }
   return {root, start, stop, open, raw, call, cleanup};
+}
+
+async function openValidationView(page: Page, harness: Awaited<ReturnType<typeof cutoverHarness>>) {
+  const {root, start, open, call} = harness;
+  await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
+  await start();await open();
+  await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
+  await call('cutover.begin');await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+  await call('cutover.backup');await call('cutover.migrate',{expected_client_id:'fixture'});
+  await call('cutover.validation.begin',{expected_client_id:'fixture'});
+  await page.reload();await page.getByTestId('nav-youtube').click();
+  await page.getByRole('button',{name:'打开正式连接验证',exact:true}).click();
+  await page.getByRole('button',{name:'打开登录画面',exact:true}).click();
+  await expect(page.getByAltText('服务器登录页面')).toBeVisible();
 }
 
 test('formal cutover validation keeps admission closed through proved connection checks and clean restart', async ({page, request}, testInfo) => {
@@ -250,3 +265,194 @@ test('unplanned validation restart aborts and retains the original deadline', as
     expect((await raw('manual.submit',{url:'https://youtu.be/abcdefghijk',request_id:'still-blocked'})).kind).toBe('cutover_hold');
   } finally {await cleanup();}
 });
+
+test('an explicit new attempt archives the aborted window and requires fresh backup and proofs', async ({page, request}, testInfo) => {
+  test.setTimeout(120000);
+  const {root, start, stop, open, raw, call, cleanup} = await cutoverHarness(page, request);
+  try {
+    await writeFile(join(root,'model-unavailable'),'');
+    await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
+    await start();await open();
+    await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
+    await call('activity.resume');
+    await call('manual.submit',{url:'https://youtu.be/abcdefghijk',request_id:'kept-request'});
+    await call('manual.submit',{url:'https://youtu.be/cancelled01',request_id:'cancel-request'});
+    await call('activity.cancel',{video_ids:['cancelled01']});
+    await call('content_session.open');await call('content_session.click',{x:1,y:1});
+    await call('content_session.confirm',{video_id:'abcdefghijk',same_account:true});
+    const content=await call('content_session.status');
+    await call('cutover.begin');
+    await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+    await call('cutover.backup');await call('cutover.migrate',{expected_client_id:'fixture'});
+    await call('cutover.validation.begin',{expected_client_id:'fixture'});
+    await call('cutover.validate',{capability:'connection.check'});
+    const old=await call('cutover.status');
+    await writeFile(join(root,'hold-subscriptions'),'');
+    const pending=raw('cutover.validate',{capability:'connection.check'});
+    await expect.poll(async()=>{try{await readFile(join(root,'subscriptions-held'));return true;}catch{return false;}}).toBe(true);
+    await writeFile(join(root,'clock'),String(old.deadline_at+1));
+    expect((await call('cutover.status')).state).toBe('aborted');
+    expect((await raw('cutover.new_attempt')).ok).toBe(false);
+    await rm(join(root,'hold-subscriptions'));expect((await pending).ok).toBe(false);
+    await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+    expect((await call('cutover.begin')).deadline_at).toBe(old.deadline_at);
+    await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+    await writeFile(join(root,'fail-attempt-replacement'),'');
+    expect((await raw('cutover.new_attempt')).kind).toBe('storage');
+    await rm(join(root,'fail-attempt-replacement'));
+    expect((await call('cutover.history')).attempts).toEqual([]);
+    expect((await call('cutover.status')).backup).toEqual(old.backup);
+    expect((await call('cutover.status')).deadline_at).toBe(old.deadline_at);
+    await page.reload();await page.getByTestId('nav-youtube').click();
+    await page.getByRole('button',{name:'开始独立新尝试（不是延期）',exact:true}).click({timeout:3000});
+    await expect(page.getByRole('region',{name:'YouTube 切换暂停'})).toContainText('已开始独立新尝试');
+    const fresh=await call('cutover.status');
+    expect(fresh.attempt_id).toBeTruthy();expect(fresh.deadline_at-fresh.started_at).toBe(1800);
+    expect(fresh.started_at).toBeGreaterThan(old.deadline_at);
+    expect(fresh.validation).toBeUndefined();expect(fresh.backup).toBeNull();
+    expect(fresh.migration.finished).toBe(false);
+    await page.screenshot({path:testInfo.outputPath('new-attempt.png'),fullPage:true});
+    const history=await call('cutover.history');expect(history.attempts).toHaveLength(1);
+    expect(history.attempts[0].attempt.deadline_at).toBe(old.deadline_at);
+    expect(history.attempts[0].attempt.state).toBe('aborted');
+    expect(history.attempts[0].backup).toEqual(old.backup);
+    expect(history.attempts[0].migration.finished).toBe(true);
+    expect((await call('connection.status')).authorized).toBe(true);
+    expect((await call('content_session.status')).generation).toBe(content.generation);
+    expect((await call('activity.snapshot')).drain_paused).toBe(false);
+    expect((await call('library.inspect',{video_id:'cancelled01'})).preparation_state).toBe('cancelled');
+    expect((await call('library.inspect',{video_id:'abcdefghijk'})).request_kind).toBe('manual');
+    await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+    expect((await raw('cutover.validation.begin',{expected_client_id:'fixture'})).ok).toBe(false);
+    expect((await raw('cutover.new_attempt')).ok).toBe(false);
+    await call('cutover.backup');await call('cutover.migrate',{expected_client_id:'fixture'});
+    const verified=await call('cutover.validation.begin',{expected_client_id:'fixture'});
+    expect(verified.backup.created_at).toBeGreaterThan(old.deadline_at);
+    expect(verified.validation.proofs.official).toBeUndefined();
+    expect(verified.validation.proofs.initial).toBeUndefined();
+    expect((await raw('cutover.complete',{official:true,restart:true})).ok).toBe(false);
+    const deadline=fresh.deadline_at;
+    await stop();await start();
+    expect((await call('cutover.status')).deadline_at).toBe(deadline);
+    expect((await call('cutover.history')).attempts).toEqual(history.attempts);
+  } finally {await cleanup();}
+});
+
+for (const boundary of ['idle', 'resources', 'deadline'] as const) {
+  test(`explicit validation handoff closes on ${boundary} without unattended work`, async ({page, request}) => {
+    test.setTimeout(60000);
+    const {root, start, open, raw, call, cleanup} = await cutoverHarness(page, request);
+    try {
+      await writeFile(join(root,'subscription-videos.json'),JSON.stringify(['automatic01']));
+      await start();await open();
+      await call('connection.import_authorization',{client_id:'fixture',client_secret:'fixture-secret',refresh_token:'fixture-refresh'});
+      await call('cutover.begin');
+      await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+      await call('cutover.backup');await call('cutover.migrate',{expected_client_id:'fixture'});
+      await call('cutover.validation.begin',{expected_client_id:'fixture'});
+      const browser=await call('cutover.validate',{capability:'content_session.open'});
+      expect(browser.browser_running).toBe(true);
+      const official=await readFile(join(root,'google-requests.jsonl'),'utf8');
+      if (boundary==='resources') {
+        await writeFile(join(root,'resources.json'),JSON.stringify({available:2*1024**3,browser_unreclaimable:1024**3,browser_swap:0,constrained:true}));
+      } else {
+        const deadline=boundary==='idle' ? browser.idle_closes_at : (await call('cutover.status')).deadline_at;
+        await writeFile(join(root,'clock'),String(deadline+1));
+      }
+      await expect.poll(async()=>{try{await readFile(join(root,'browser-running'));return true;}catch{return false;}},{timeout:3000}).toBe(false);
+      expect((await call('content_session.status')).browser_running).toBe(false);
+      if (boundary==='deadline') {
+        await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+        expect((await call('cutover.status')).state).toBe('aborted');
+      } else {
+        expect((await call('cutover.status')).state).toBe('validating');
+      }
+      expect((await call('activity.snapshot')).runtime.worker_alive).toBe(false);
+      expect(await readFile(join(root,'google-requests.jsonl'),'utf8')).toBe(official);
+      await call('connection.disconnect');
+      await rm(join(root,'resources.json'),{force:true});
+      await writeFile(join(root,'clock'),String(Number(await readFile(join(root,'clock'),'utf8'))+60));
+      await new Promise(done=>setTimeout(done,500));
+      expect((await call('content_session.status')).browser_running).toBe(false);
+      expect((await call('connection.status')).authorized).toBe(false);
+      expect((await raw('cutover.validate',{capability:'content_session.open'})).ok).toBe(false);
+    } finally {await cleanup();}
+  });
+}
+
+
+for (const control of ['close', 'confirm'] as const) {
+test(`slow validation screen queues one click and ${control} instead of rejecting the user`, async ({page, request}) => {
+  test.setTimeout(60000);
+  const harness = await cutoverHarness(page, request);
+  const {root, call, cleanup} = harness;
+  try {
+    await openValidationView(page, harness);
+    await page.getByRole('checkbox',{name:'我确认两条连接使用同一 Google 账号（用户确认，系统未自动核验）'}).check();
+    await page.getByLabel('用于检查字幕的视频链接').fill('https://youtu.be/abcdefghijk');
+    const sent:string[]=[];
+    page.on('request',item=>{if(item.url().endsWith('/v1/youtube/capability')&&item.method()==='POST'){
+      const value=item.postDataJSON();if(value.capability==='cutover.validate')sent.push(value.arguments.capability);
+    }});
+    await writeFile(join(root,'screen-hold'),'');
+    await expect.poll(async()=>{try{await readFile(join(root,'screen-held'));return true;}catch{return false;}}).toBe(true);
+    await page.getByAltText('服务器登录页面').click();
+    await new Promise(done=>setTimeout(done,200));
+    expect(sent.filter(name=>name==='content_session.click')).toHaveLength(0);
+    await page.getByRole('button',{name:control==='close'?'关闭服务器浏览器':'完成登录并检查字幕',exact:true}).click();
+    expect(sent.filter(name=>name===`content_session.${control}`)).toHaveLength(0);
+    await rm(join(root,'screen-hold'));
+    await expect.poll(async()=>(await call('content_session.status')).browser_running).toBe(false);
+    expect(sent.filter(name=>name==='content_session.click')).toHaveLength(1);
+    expect(sent.filter(name=>name===`content_session.${control}`)).toHaveLength(1);
+    const commands=(await readFile(join(root,'browser-commands.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line).command);
+    expect(commands.filter(command=>command==='click')).toHaveLength(1);
+    if(control==='confirm')await expect.poll(async()=>(await call('cutover.status')).validation.proofs.initial).toBeTruthy();
+    expect(await page.getByRole('button',{name:'打开登录画面',exact:true}).isVisible()).toBe(true);
+  } finally {await cleanup();}
+});
+}
+
+for (const {cause, control} of [
+  {cause:'screen_failure',control:'none'}, {cause:'attempt_deadline',control:'none'},
+  {cause:'screen_failure',control:'close'}, {cause:'screen_failure',control:'confirm'},
+] as const) {
+test(`retired slow screen (${cause}/${control}) discards queued credential input without replay`, async ({page, request}) => {
+  test.setTimeout(60000);
+  const harness = await cutoverHarness(page, request);
+  const {root, call, cleanup} = harness;
+  try {
+    await openValidationView(page, harness);
+    if(control==='confirm') {
+      await page.getByRole('checkbox',{name:'我确认两条连接使用同一 Google 账号（用户确认，系统未自动核验）'}).check();
+      await page.getByLabel('用于检查字幕的视频链接').fill('https://youtu.be/abcdefghijk');
+    }
+    const sent:string[]=[];
+    page.on('request',item=>{if(item.url().endsWith('/v1/youtube/capability')&&item.method()==='POST'){
+      const value=item.postDataJSON();if(value.capability==='cutover.validate')sent.push(value.arguments.capability);
+    }});
+    await writeFile(join(root,'screen-hold'),'');
+    await expect.poll(async()=>{try{await readFile(join(root,'screen-held'));return true;}catch{return false;}}).toBe(true);
+    await page.getByAltText('服务器登录页面').click();
+    await page.getByRole('application',{name:'服务器 Google 浏览器'}).pressSequentially('fixture-input');
+    if(control!=='none')await page.getByRole('button',{name:control==='close'?'关闭服务器浏览器':'完成登录并检查字幕',exact:true}).click();
+    if(cause==='screen_failure')await writeFile(join(root,'screen-fails'),'');
+    else await writeFile(join(root,'clock'),String((await call('cutover.status')).deadline_at+1));
+    await rm(join(root,'screen-hold'));
+    await expect(page.getByAltText('服务器登录页面')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'重试连接',exact:true})).toBeVisible();
+    expect(sent.filter(name=>['content_session.click','content_session.text'].includes(name))).toHaveLength(0);
+    if(control!=='none')expect(sent.filter(name=>name===`content_session.${control}`)).toHaveLength(0);
+    if(cause==='attempt_deadline') {
+      await expect.poll(async()=>(await call('cutover.status')).drained).toBe(true);
+      expect((await call('cutover.status')).state).toBe('aborted');return;
+    }
+    await rm(join(root,'screen-fails'));
+    await page.getByRole('button',{name:'重试连接',exact:true}).click();
+    await expect(page.getByAltText('服务器登录页面')).toBeVisible();
+    expect(sent.filter(name=>['content_session.click','content_session.text'].includes(name))).toHaveLength(0);
+    await page.getByAltText('服务器登录页面').click();
+    await expect.poll(()=>sent.filter(name=>name==='content_session.click').length).toBe(1);
+  } finally {await cleanup();}
+});
+}

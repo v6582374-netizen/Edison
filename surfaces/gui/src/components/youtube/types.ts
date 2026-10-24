@@ -75,6 +75,7 @@ export type Activity = {
   health?: Health;
   acceptance?: Acceptance;
   cutover?: {held: boolean; state: "idle" | "draining" | "ready" | "validating" | "complete" | "aborted" | "incompatible"; reason?: string; deadline_at?: number; drained?: boolean; active_requests?: number;
+    previous_attempts?: {started_at: number; deadline_at: number; state: string}[];
     validation?: {restart_requested?: boolean; restarted?: boolean; proofs: Record<string, unknown>};
     backup?: {created_at: number; verified: boolean; translations: number;
       summary: {documents: number; manuscript_versions: number; transcripts: number}} | null;

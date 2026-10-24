@@ -474,6 +474,28 @@ class ContentSession:
                 self._last_input = self.now()
             return result
 
+    def tick_handoff(self):
+        """Maintain an explicitly opened view without starting unattended work."""
+        with self._lock:
+            if not self._owner or self._retired or self._state.get("disconnected") or not self._running:
+                return
+            with self._control():
+                if self.now() >= self._last_input + HANDOFF_IDLE:
+                    self.close_browser()
+                    return
+                if hasattr(self._browser, "alive") and not self._browser.alive:
+                    self.status()
+                    self._open_pending = False
+                    return
+                if self.resources:
+                    state = self.resources.status()
+                    if state["release_browser"]:
+                        self._browser.release_resources(state)
+                        self._running = False
+                        self._open_pending = False
+                        self.resources.browser_released()
+                        self.record_failure(ContentSessionError("resource", state["reason"]))
+
     def tick(self):
         with self._lock:
             if self.unattended and not self._retired:
