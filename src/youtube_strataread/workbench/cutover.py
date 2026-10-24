@@ -12,7 +12,7 @@ import copy
 import math
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from youtube_strataread.workbench.youtube_api import ConnectionError
 
@@ -61,10 +61,10 @@ class CutoverHold:
             self._monotonic_deadline = time.monotonic() + max(0, self._state["deadline_at"] - workspace.now())
             self._save()
 
-    def _save(self):
+    def _save(self, state=None):
         if self._incompatible:
             return  # Never reinterpret a newer program's durable cutover record.
-        self.workspace.set_meta("youtube_cutover", json.dumps(self._state, ensure_ascii=False))
+        self.workspace.set_meta("youtube_cutover", json.dumps(self._state if state is None else state, ensure_ascii=False))
 
     @property
     def held(self):
@@ -208,27 +208,43 @@ class CutoverHold:
             # release. Thread allocation or storage failure leaves the hold set.
             release, cancel = prepare_workers()
             previous = None
+            staged = False
             try:
                 # Neither filesystem verification nor allocating replacement
                 # threads may extend the original wall/monotonic deadline.
                 # Keep an expired aborted state rather than rolling it back.
                 self._require_validation_idle()
                 previous = copy.deepcopy(self._state)
-                self._state.update(held=False, state="complete", completed_at=self.workspace.now(),
-                                   reason="正式验证已通过；按当前用户许可恢复处理，等待持续观察验收。")
+                # Phase A is durably held even if its acknowledgement is late,
+                # a later abort write fails, or the process dies before phase B.
+                self._state.update(state="completing", completion_staged_at=self.workspace.now())
                 self._save()
-                if self._deadline_expired():
-                    # A commit can itself wait for storage. Restore admission
-                    # before publishing its expiry; pending workers stay gated.
-                    self._state = previous
-                    previous = None
-                    self.status()
+                staged = True
+                decided_at = self.workspace.now()
+                decided_monotonic = time.monotonic()
+                if (decided_at >= self._state["deadline_at"] or
+                        self._monotonic_deadline is not None and decided_monotonic >= self._monotonic_deadline):
+                    self._state.update(state="aborted", reason="正式验证保存已超过原维护截止时间；采集继续暂停。")
+                    self._save()
                     raise CutoverBlocked("正式验证保存已超过原维护截止时间；采集继续暂停。")
+                # Phase B publishes a decision already formed inside the window.
+                # Its acknowledgement latency does not reopen that decision; no
+                # worker is released until this transaction returns successfully.
+                receipt = {**copy.deepcopy(self._state), "held": False, "state": "complete",
+                           "completed_at": decided_at, "activation_decided_at": decided_at,
+                           "activation_decided_monotonic_at": decided_monotonic,
+                           "reason": "正式验证已通过；按当前用户许可恢复处理，等待持续观察验收。"}
+                self._save(receipt)
             except Exception:
-                if previous is not None:
+                if not staged and previous is not None:
                     self._state = previous
                 cancel()
                 raise
+            self._state = receipt
+            # This response-only observation is not another admission receipt.
+            with suppress(Exception):
+                self._state.update(publication_acknowledged_at=self.workspace.now(),
+                                   publication_acknowledged_monotonic_at=time.monotonic())
             release()
             return self.status()
 
