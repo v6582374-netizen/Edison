@@ -402,6 +402,17 @@ export function YouTubeView({
         <p>{yt(activity.cutover.reason || "")}</p>
         <p>{yt("Auto Update 的选择与已接收请求保持不变；仍可阅读、取消处理或断开 YouTube。")}</p>
         {activity.cutover.state !== "incompatible" && <>
+        {activity.cutover.state === "aborted" && <>
+          <p>{yt("独立新尝试不会延长或删除旧尝试；必须重新取得备份并完成全部正式验证。")}</p>
+          <button className="yp-btn" disabled={!activity.cutover.drained || !!activity.cutover.active_requests}
+            onClick={() => void call("cutover.new_attempt").then(refreshActivity).catch(error => setMessage(String(error)))}>{yt("开始独立新尝试（不是延期）")}</button>
+        </>}
+        {!!activity.cutover.previous_attempts?.length && <details>
+          <summary>{yt("已保留 {{count}} 次历史尝试", {count: activity.cutover.previous_attempts.length})}</summary>
+          <ul>{activity.cutover.previous_attempts.map((attempt, index) => <li key={index}>
+            {yt("已中止尝试：{{start}} — {{deadline}}", {start: new Date(attempt.started_at * 1000).toLocaleString(), deadline: new Date(attempt.deadline_at * 1000).toLocaleString()})}
+          </li>)}</ul>
+        </details>}
         <p>{yt(activity.cutover.migration?.stage_label || "尚未迁移")}</p>
         {(activity.cutover.migration?.unknown.length ?? 0) > 0 && <>
           <p>{yt("待核对 {{count}} 项", {count: activity.cutover.migration?.unknown.length})}</p>

@@ -380,3 +380,68 @@ hold.complete_validation(lambda proofs: None, lambda: (lambda: os._exit(99), lam
     assert durable['held'] and durable['state'] == 'completing'
     restarted = CutoverHold(workspace)
     assert restarted.status()['held'] and restarted.status()['state'] == 'aborted'
+
+
+def test_waiting_validation_input_cannot_join_a_new_attempt_after_handoff_release(
+        monkeypatch, completion_ready):
+    workspace, hold, clock, context = completion_ready
+    entered, finish_handoff, waiting, waiter_awake, resume_waiter = (threading.Event() for _ in range(5))
+    result = []
+    original_wait = threading.Condition.wait
+    intercepted = [False]
+
+    def deferred_wait(condition, timeout=None):
+        if threading.current_thread().name != 'queued-validation-input' or intercepted[0]:
+            return original_wait(condition, timeout)
+        intercepted[0] = True
+        waiting.set()
+        value = original_wait(condition, timeout)
+        # Reproduce the scheduling boundary after notification but before this
+        # old request gets admission; only the threading boundary is controlled.
+        condition.release()
+        try:
+            waiter_awake.set()
+            assert resume_waiter.wait(3)
+        finally:
+            condition.acquire()
+        return value
+
+    monkeypatch.setattr(threading.Condition, 'wait', deferred_wait)
+
+    def maintain():
+        with hold.validation_work(maintenance=True):
+            entered.set()
+            assert finish_handoff.wait(3)
+
+    def old_input():
+        try:
+            with hold.validation_work():
+                result.append('sent')
+        except CutoverBlocked:
+            result.append('discarded')
+
+    maintenance = threading.Thread(target=maintain)
+    user = threading.Thread(target=old_input, name='queued-validation-input')
+    maintenance.start()
+    try:
+        assert entered.wait(2)
+        user.start()
+        assert waiting.wait(2)
+        finish_handoff.set()
+        maintenance.join(2)
+        assert waiter_awake.wait(2)
+        hold.abort()
+        hold.observe_drain((), lambda: None)
+        hold.wait_idle()
+        hold.new_attempt(threading.Event(), lambda: None)
+        hold.begin_validation(context)
+        resume_waiter.set()
+        user.join(2)
+        assert not user.is_alive()
+        assert result == ['discarded']
+    finally:
+        finish_handoff.set()
+        resume_waiter.set()
+        maintenance.join(2)
+        if user.ident is not None:
+            user.join(2)

@@ -40,10 +40,8 @@ export function YouTubeSessionSettings({ maintenance: maintenanceMode = false }:
 
   const failed = (failure: unknown, view: boolean, retry: "status" | "open") => {
     setRetryAction(retry);
-    if (view || !(failure instanceof YouTubeCapabilityError)) {
-      revision.current++;
-      setScreen(null);
-    }
+    revision.current++;
+    setScreen(null);
     if (failure instanceof YouTubeCapabilityError) {
       if (view) setViewError(failure.message);
       else setError(failure.message);
@@ -51,13 +49,21 @@ export function YouTubeSessionSettings({ maintenance: maintenanceMode = false }:
       setNetworkError((view ? "登录画面连接已中断，旧画面已隐藏。" : "") + reconnect);
     }
   };
+  const enqueue = <T,>(observed: number, action: () => Promise<T>) => {
+    const next = queued.current.then(() => observed === revision.current ? action() : undefined);
+    queued.current = next.then(() => {}, () => {});
+    return next;
+  };
   useEffect(() => {
     let active = true;
     const observed = revision.current;
     const current = () => active && observed === revision.current;
-    void youtubeCapability<ContentSessionStatus>("content_session.status")
-      .then(value => { if (current()) setStatus(value); })
-      .catch(failure => { if (current()) failed(failure, false, "status"); });
+    void enqueue(observed, async () => {
+      try {
+        const value = await youtubeCapability<ContentSessionStatus>("content_session.status");
+        if (current()) setStatus(value);
+      } catch (failure) { if (current()) failed(failure, false, "status"); }
+    });
     return () => { active = false; revision.current++; };
   }, []);
   useEffect(() => {
@@ -67,18 +73,22 @@ export function YouTubeSessionSettings({ maintenance: maintenanceMode = false }:
     const observed = revision.current;
     const current = () => active && observed === revision.current;
     const poll = async () => {
-      try {
-        const state = await youtubeCapability<ContentSessionStatus>("content_session.status");
+      await enqueue(observed, async () => {
         if (!current()) return;
-        setStatus(state);
-        if (!state.browser_running || state.maintenance?.state === "running") { setScreen(null); return; }
-        const next = await request<Screen>("content_session.screen");
-        if (!current()) return;
-        setScreen(next);
-        timer = setTimeout(poll, 1200);
-      } catch (failure) {
-        if (current()) failed(failure, true, "open");
-      }
+        try {
+          const state = await youtubeCapability<ContentSessionStatus>("content_session.status");
+          if (!current()) return;
+          setStatus(state);
+          if (!state.browser_running || state.maintenance?.state === "running") { setScreen(null); return; }
+          const next = await request<Screen>("content_session.screen");
+          if (current()) setScreen(next);
+        } catch (failure) {
+          // A queued close/confirm retires this effect before its screen ends.
+          // Its failure must still retire that revision and discard queued input.
+          if (observed === revision.current) failed(failure, true, "open");
+        }
+      });
+      if (current()) timer = setTimeout(poll, 1200);
     };
     void poll();
     return () => { active = false; clearTimeout(timer); };
@@ -88,40 +98,57 @@ export function YouTubeSessionSettings({ maintenance: maintenanceMode = false }:
     if (status?.state !== "waiting_resources" && status?.state !== "maintaining") return;
     const timer = setInterval(() => {
       const observed = revision.current;
-      void youtubeCapability<ContentSessionStatus>("content_session.status").then(next => {
-        if (observed !== revision.current) return;
-        setStatus(next);
-        if (next.state !== "waiting_resources" && next.state !== "maintaining") {setError(""); setViewError("");}
-      }).catch(() => {});
+      void enqueue(observed, async () => {
+        try {
+          const next = await youtubeCapability<ContentSessionStatus>("content_session.status");
+          if (observed !== revision.current) return;
+          setStatus(next);
+          if (next.state !== "waiting_resources" && next.state !== "maintaining") {setError(""); setViewError("");}
+        } catch { /* preserve the existing failure until an explicit action */ }
+      });
     }, 1200);
     return () => clearInterval(timer);
   }, [status?.state]);
 
   const run = async (operation: string) => {
     setBusy(operation); setError("");
-    if (["open", "confirm", "close"].includes(operation)) { revision.current++; setScreen(null); }
+    // Opening a fresh view retires old queued input immediately. Close/confirm
+    // retire only when they reach the queue, after already accepted input.
+    if (operation === "open") { revision.current++; setScreen(null); }
+    const observed = revision.current;
     try {
-      const next = await request<ContentSessionStatus>(`content_session.${operation}`, {url: videoUrl, same_account: sameAccount});
-      setStatus(next); setNetworkError(""); setViewError(""); setViewAttempt(value => value + 1);
-    } catch (failure) {
-      failed(failure, operation === "open", operation === "open" ? "open" : "status");
-      if (failure instanceof YouTubeCapabilityError) {
+      await enqueue(observed, async () => {
+        if (["confirm", "close"].includes(operation)) { revision.current++; setScreen(null); }
+        const owned = revision.current;
         try {
-          const next = await youtubeCapability<ContentSessionStatus>("content_session.status");
-          setStatus(next);
-          if (next.state === "waiting_resources") {setViewError(""); setError("");}
+          const next = await request<ContentSessionStatus>(`content_session.${operation}`, {url: videoUrl, same_account: sameAccount});
+          if (owned !== revision.current) return;
+          setStatus(next); setNetworkError(""); setViewError(""); setViewAttempt(value => value + 1);
+        } catch (failure) {
+          if (owned !== revision.current) return;
+          failed(failure, operation === "open", operation === "open" ? "open" : "status");
+          if (failure instanceof YouTubeCapabilityError) {
+            const retired = revision.current;
+            try {
+              const next = await youtubeCapability<ContentSessionStatus>("content_session.status");
+              if (retired !== revision.current) return;
+              setStatus(next);
+              if (next.state === "waiting_resources") {setViewError(""); setError("");}
+            } catch (transport) { if (retired === revision.current) failed(transport, false, "status"); }
+          }
         }
-        catch (transport) { failed(transport, false, "status"); }
-      }
+      });
     } finally { setBusy(""); }
   };
   const input = (operation: string, args: Record<string, unknown>) => {
     if (!screen || viewPaused || changingBrowser) return;
     const observed = revision.current;
-    // Failed or retired views discard pending input; never replay credentials on recovery.
-    queued.current = queued.current.then(async () => {
-      if (observed === revision.current) await request(`content_session.${operation}`, args);
-    }).catch(failure => { if (observed === revision.current) failed(failure, true, "open"); });
+    // Screens, input and controls share one revision-fenced queue. Any failure
+    // retires the view before later credential input can be sent; never replay.
+    void enqueue(observed, async () => {
+      try { await request(`content_session.${operation}`, args); }
+      catch (failure) { if (observed === revision.current) failed(failure, true, "open"); }
+    });
   };
   return <section aria-label="YouTube 内容会话" className="space-y-3 mt-5">
     <h3 className="text-[15px] font-medium">YouTube 内容会话</h3>

@@ -624,7 +624,11 @@
     "打开正式连接验证": "Open formal connection validation",
     "完成内容登录与同账号确认后，关闭服务器浏览器并再次检查同一视频的字幕。准备重启后由维护者正常重启服务，原截止时间不会延长。": "After content sign-in and same-account confirmation, close the server browser and fetch captions for the same video again. The maintainer then prepares and normally restarts the service. The original deadline remains unchanged.",
     "准备计划重启验证": "Prepare planned restart validation",
-    "完成正式验证并恢复当前许可的处理": "Complete formal validation and resume currently permitted work"
+    "完成正式验证并恢复当前许可的处理": "Complete formal validation and resume currently permitted work",
+    "独立新尝试不会延长或删除旧尝试；必须重新取得备份并完成全部正式验证。": "A separate attempt does not extend or delete the previous attempt. Take a fresh backup and complete all formal checks again.",
+    "开始独立新尝试（不是延期）": "Start a separate attempt (not an extension)",
+    "已保留 {{count}} 次历史尝试": "{{count}} previous attempts retained",
+    "已中止尝试：{{start}} — {{deadline}}": "Aborted attempt: {{start}} — {{deadline}}"
   },
   "boot": {
     "starting": "Starting OpenWorker…",

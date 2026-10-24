@@ -210,8 +210,16 @@ class YouTubeWorkbench:
 
     def _watch_cutover(self):
         while not self.maintenance_stop.wait(.2):
-            if self.cutover.held and not self.cutover.incompatible and not self.cutover.validating:
-                self.cutover.observe_drain(self._workers(), self.content_session.close_browser)
+            if self.cutover.held and not self.cutover.incompatible:
+                if self.cutover.validating:
+                    from youtube_strataread.workbench.content_session import ContentSessionError
+                    try:
+                        with self.cutover.validation_work(maintenance=True):
+                            self.content_session.tick_handoff()
+                    except (CutoverBlocked, ContentSessionError, OSError):
+                        pass
+                else:
+                    self.cutover.observe_drain(self._workers(), self.content_session.close_browser)
 
     def _sync_subscriptions(self) -> None:
         self.connection.watch_subscriptions(self.stop, now=self.discovery.now, wake=self.refresh_requested)
@@ -521,6 +529,7 @@ class YouTubeWorkbench:
                                 if validation.get("restarted"):
                                     self.cutover.validation_proof(revision, "restarted", proof)
                 if response.get("ok"):
+                    self.cutover.assert_validation(revision)
                     with contextlib.suppress(Exception):
                         if capability == "connection.check":
                             self.acceptance.connection_verified("official")
@@ -573,6 +582,12 @@ class YouTubeWorkbench:
             return {"ok": False, "kind": "cutover_hold", "error": str(error)}
 
     def _admitted_dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if capability in {"cutover.new_attempt", "cutover.backup", "cutover.migrate", "cutover.validation.begin"}:
+            with self.cutover.maintenance_operation():
+                return self._maintenance_dispatch(capability, arguments)
+        return self._maintenance_dispatch(capability, arguments)
+
+    def _maintenance_dispatch(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if capability.startswith("cutover."):
             if self.cutover.incompatible and capability != "cutover.status":
                 # An older program never migrates or backs up a newer library.
@@ -587,6 +602,25 @@ class YouTubeWorkbench:
                 return {"ok": True, "result": self._cutover_status()}
             if capability == "cutover.status":
                 return {"ok": True, "result": self._cutover_status()}
+            if capability == "cutover.history":
+                return {"ok": True, "result": {"attempts": self.cutover.history()}}
+            if capability == "cutover.new_attempt":
+                try:
+                    def verify_stopped():
+                        from youtube_strataread.workbench.content_session import ContentSessionError
+                        try:
+                            content = self.content_session.status()
+                        except ContentSessionError:
+                            raise CutoverBlocked("尚未确认服务器浏览器已正常退出，请先检查运行环境。") from None
+                        if (any(worker.is_alive() for worker in self._workers()) or content.get("browser_running")
+                                or content.get("browser_pending")):
+                            raise CutoverBlocked("旧写者或服务器浏览器尚未退出，不能开始独立新尝试。")
+                    self.cutover.new_attempt(self.stop, verify_stopped)
+                    return {"ok": True, "result": self._cutover_status()}
+                except (ConnectionError, ValueError) as error:
+                    return {"ok": False, "kind": "cutover_hold", "error": str(error)}
+                except (OSError, sqlite3.Error):
+                    return {"ok": False, "kind": "storage", "error": "独立新尝试未能保存；旧尝试与原截止时间保持不变。"}
             if capability == "cutover.validation.begin":
                 try:
                     migration = self.migration.status()

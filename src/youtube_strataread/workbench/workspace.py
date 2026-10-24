@@ -1174,6 +1174,26 @@ class LocalWorkspace:
                 (key, value),
             )
 
+    def archive_cutover_attempt(self, expected: dict, replacement: dict, archived_id: str) -> None:
+        """Archive the old attempt and clear only its current evidence atomically."""
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            def read(key):
+                row = connection.execute("SELECT value FROM workspace_meta WHERE key=?", (key,)).fetchone()
+                return json.loads(row[0]) if row else None
+            previous = read("youtube_cutover")
+            if previous != expected:
+                raise ValueError("切换状态已经改变，请重新读取后再开始独立新尝试。")
+            history = read("youtube_cutover_history") or []
+            history.append({"attempt": {**previous, "attempt_id": archived_id},
+                            "backup": read("youtube_backup"), "migration": read("youtube_historical_migration"),
+                            "archived_at": replacement["started_at"]})
+            for key, value in (("youtube_cutover_history", history), ("youtube_cutover", replacement)):
+                connection.execute(
+                    "INSERT INTO workspace_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, json.dumps(value, ensure_ascii=False)))
+            connection.execute("DELETE FROM workspace_meta WHERE key IN ('youtube_backup','youtube_historical_migration')")
+
     def meta(self, key: str) -> str | None:
         with sqlite3.connect(self.database_path) as connection:
             row = connection.execute(
