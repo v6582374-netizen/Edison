@@ -112,10 +112,12 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
   const cooldownUntil = activity?.youtube_requests?.cooldown_until || 0;
   const cooling = cooldownUntil * 1000 > now;
   const stage = current?.preparation_stage || current?.preparation_state;
+  const discovering = !stale && !active && !activity?.cutover?.held && !!activity?.model_ready
+    && !activity?.drain_paused && !cooling && !!activity?.runtime?.discovering;
   const title = stale ? yt("正在重新连接") : activity?.cutover?.held && !active ? yt("YouTube 切换暂停") : !activity?.model_ready ? yt("等待模型设置")
     : active ? labels[stage || ""] || yt("正在处理") : activity?.drain_paused ? yt("更新已暂停")
     : cooling ? yt("YouTube 冷却中")
-    : activity?.runtime?.discovering ? yt("正在检查订阅") : activity?.queued ? yt("等待处理")
+    : discovering ? yt("正在检查订阅") : activity?.queued ? yt("等待处理")
     : activity?.awaiting_classification ? yt("等待确认视频类型") : yt("等待新的订阅更新");
   const events = activity?.events || [];
   const jobEvents = events.filter(event => event.video_id === current?.video_id && event.occurred_at >= (current?.preparation_started_at || 0));
@@ -139,7 +141,7 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
       </button>
     </div>
     <div className="discovery-stage-strip-layout-ma">
-      <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live && !activity?.cutover?.held)} observedStage={title}
+      <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live && !activity?.cutover?.held)} waiting={!active && !discovering} observedStage={title}
         signalCopy={current ? `${current.title} · ${videoMetadataText(current)}` : ""}
         milestones={milestones} metrics={[
           { label: yt("待处理"), value: activity?.queued ?? "—", note: yt("尚未开始，可以取消") },
