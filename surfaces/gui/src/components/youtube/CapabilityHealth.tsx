@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { yt } from "./text";
 import type { Capability, Health } from "./types";
+import { Icon } from "../Icon";
 
 const at = (value?: number | null) => value ? new Date(value * 1000).toLocaleString() : yt("尚无记录");
 const capabilityName = (name?: string) => name === "subscriptions" ? yt("订阅能力") : yt("字幕能力");
@@ -24,24 +25,34 @@ const guidance = (category?: string) =>
     : yt("这不是重新登录能解决的问题，请检查服务器存储、权限或配置。");
 
 /** One persistent in-site notice, never a repeated popup. */
-export function CapabilityNotice({ health }: { health?: Health }) {
+export function CapabilityNotice({ health, onConnection, onDetails }: {
+  health?: Health; onConnection?: () => void; onDetails?: () => void;
+}) {
   useTranslation();
   const notice = health?.notice;
   if (!notice || notice.level === "none") return null;
-  const name = capabilityName(notice.capability);
+  const name = notice.capability === "subscriptions" ? yt("订阅更新") : yt("字幕获取");
   const next = notice.next_check_at ? yt("下一次检查：{{time}}", { time: at(notice.next_check_at) }) : "";
+  const connectionNeeded = notice.level === "attention" && ["user", "reauthorization", "authorization"].includes(notice.category || "");
   if (notice.level === "waiting")
-    return <p className="yp-capability-wait" role="status" aria-label={yt("YouTube 等待说明")}>
-      {name} · {categoryLabel(notice.category)}{notice.reason ? `：${yt(notice.reason)}` : ""} {next}
-    </p>;
+    return <section className="yp-capability-wait" role="status" aria-label={yt("YouTube 等待说明")}>
+      <Icon name="clock" />
+      <div><strong>{yt("{{name}}暂缓", {name})}</strong>
+        <p>{categoryLabel(notice.category)}{next ? ` · ${next}` : ""}</p>
+        <p>{yt("已有文稿可以继续阅读，后台会按计划检查恢复。")}</p>
+      </div>
+      {onDetails && <button className="yp-status-action" onClick={onDetails}>{yt("查看运行详情")}</button>}
+    </section>;
   return <section className={`yp-capability-alert ${notice.level}`} role="alert" aria-label={yt("YouTube 能力提示")}>
-    <strong>{notice.level === "escalated"
+    <Icon name="warning" />
+    <div><strong>{notice.level === "escalated"
       ? yt("{{name}}已中断超过 24 小时", { name })
       : `${name} · ${categoryLabel(notice.category)}`}</strong>
-    {notice.reason && <p>{yt(notice.reason)}</p>}
     <p>{notice.level === "escalated" ? yt("{{category}}。后台仍按计划低频检查，无需点击重试；已有资料可以继续阅读。", { category: categoryLabel(notice.category) }) : guidance(notice.category)}</p>
-    {notice.since && <p>{yt("开始于：{{time}}", { time: at(notice.since) })}</p>}
     {next && <p>{next}</p>}
+    </div>
+    {connectionNeeded && onConnection ? <button className="yp-status-action" onClick={onConnection}>{yt("查看连接")}</button>
+      : onDetails && <button className="yp-status-action" onClick={onDetails}>{yt("查看运行详情")}</button>}
   </section>;
 }
 
@@ -54,6 +65,7 @@ function Row({ name, item }: { name: string; item: Capability }) {
       <span>{yt("最近成功：{{time}}", { time: at(item.last_success_at) })}</span>
       <span>{yt("最近失败：{{time}}", { time: at(item.last_failure_at) })}</span>
       {item.next_check_at && <span>{yt("下一次检查：{{time}}", { time: at(item.next_check_at) })}</span>}
+      {item.reason && <span className="yp-runtime-reason">{yt(item.reason)}</span>}
     </dd>
   </div>;
 }
@@ -64,6 +76,7 @@ export function CapabilityHealth({ health }: { health?: Health }) {
   if (!health) return null;
   const maintenance = health.maintenance;
   return <section className="yp-capability" aria-label={yt("能力状态")}>
+    <h3>{yt("连接检查")}</h3>
     <dl>
       <Row name="subscriptions" item={health.capabilities.subscriptions} />
       <Row name="captions" item={health.capabilities.captions} />

@@ -9,8 +9,7 @@ import { videoMetadataText } from "./types";
 import { LaunchHero, type Milestone } from "./discovery/LaunchHero";
 import { activityLabels } from "./activityLabels";
 import { RawConsole } from "./RawConsole";
-import { DiscoveryStatus } from "./DiscoveryStatus";
-import { CapabilityHealth } from "./CapabilityHealth";
+import { DiscoverySummary } from "./DiscoveryStatus";
 import "./discovery/discovery.css";
 import "./discovery/hierarchy.css";
 import "./progress.css";
@@ -34,11 +33,12 @@ function failure(reason: string | null, kind?: string | null) {
   return { title: yt("处理未完成"), description: yt("已有资料保留，可展开查看原因。") };
 }
 
-export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected, onRefresh, onModelSettings, onNotice }: {
+export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected, onRefresh, onModelSettings, onNotice, onRuntimeDetails }: {
   actionsTarget: HTMLDivElement | null;
   activity: Activity | null; receivedAt: number; disconnected: boolean;
   onRefresh: () => Promise<void>; onModelSettings: () => void;
   onNotice: Dispatch<SetStateAction<string>>;
+  onRuntimeDetails: () => void;
 }) {
   useTranslation();
   const labels = activityLabels();
@@ -131,13 +131,13 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
   const capability = filter === "cancelled" ? "activity.restore" : "activity.cancel";
 
   return <section className="yp-progress ui-surface-hierarchy--ma" aria-label={yt("处理进度")}>
-    <div className="yp-progress-heading">
-      <span className={`yp-heartbeat ${live ? "is-live" : ""}`} role="status">
-        {stale ? yt("连接中断 · 正在重连") : activity?.cutover?.held ? yt("维护中 · 采集暂停") : live ? yt("后台在线") : yt("后台心跳未确认")}
-      </span>
+    <div className="yp-progress-overview">
+      {stale ? <span className="yp-discovery-summary" role="status">{activity ? yt("连接中断 · 正在重连") : yt("正在读取处理进度…")}</span>
+        : <DiscoverySummary discovery={activity?.discovery} paused={!!activity?.drain_paused} />}
+      <button className="yp-runtime-trigger" onClick={onRuntimeDetails} aria-haspopup="dialog">
+        <Icon name="audit" size={14} />{yt("运行详情")}<Icon name="chevronRight" size={12} />
+      </button>
     </div>
-    <CapabilityHealth health={activity?.health} />
-    <DiscoveryStatus discovery={activity?.discovery} paused={!!activity?.drain_paused} />
     <div className="discovery-stage-strip-layout-ma">
       <LaunchHero live={live && active} offline={stale || (!!activity?.runtime && !live && !activity?.cutover?.held)} observedStage={title}
         signalCopy={current ? `${current.title} · ${videoMetadataText(current)}` : ""}
@@ -145,7 +145,7 @@ export function ProgressPage({ actionsTarget, activity, receivedAt, disconnected
           { label: yt("待处理"), value: activity?.queued ?? "—", note: yt("尚未开始，可以取消") },
           { label: yt("本轮已处理"), value: activity?.batch.completed ?? "—", note: yt("包含成功与未完成的尝试") },
           { label: yt("已生成"), value: activity?.document_count ?? activity?.ready ?? "—", note: yt("资料库累计文档") },
-          { label: yt("最近进展"), value: ago(current?.stage_updated_at || events[0]?.occurred_at, now), note: yt("后台心跳：{{value1}}", { value1: ago(heartbeat, now) }) },
+          { label: yt("最近进展"), value: ago(current?.stage_updated_at || events[0]?.occurred_at, now), note: yt("任务阶段最近更新") },
         ]} />
     </div>
     {actionsTarget && createPortal(<>

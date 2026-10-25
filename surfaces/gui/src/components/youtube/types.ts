@@ -104,6 +104,7 @@ export type Activity = {
   failed: number;
   unavailable: number;
   drain_paused: boolean;
+  model?: string;
   model_ready: boolean;
   discovery_error: string | null;
   batch: { completed: number; limit: number };

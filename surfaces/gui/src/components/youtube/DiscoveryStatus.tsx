@@ -1,9 +1,35 @@
 import {yt} from './text';
+import {useTranslation} from 'react-i18next';
 import type {DiscoveryState} from './types';
+
+const checkedAt = (value: number) => {
+  const date = new Date(value * 1000);
+  return date.toDateString() === new Date().toDateString()
+    ? date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+    : date.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+};
 
 const timeLabel = (value?: number | null) => value ? new Date(value * 1000).toLocaleString() : yt('尚无记录');
 
+/** A compact outcome, with budget and source diagnostics reserved for RuntimeDetails. */
+export function DiscoverySummary({discovery, paused}: {discovery?: DiscoveryState; paused: boolean}) {
+  useTranslation();
+  if (!discovery) return <span className="yp-discovery-summary">{yt('订阅检查尚无记录')}</span>;
+  const labels: Record<string, string> = {
+    healthy: yt('订阅检查已完成'), partial: yt('部分频道尚待检查'), paused: yt('自动发现已暂停'),
+    authorization: yt('订阅检查需要重新授权'), quota: yt('订阅检查等待额度恢复'),
+    budget: yt('订阅检查等待预算恢复'), service: yt('订阅检查暂缓'),
+  };
+  return <span className="yp-discovery-summary" role="status">
+    <span>{paused ? yt('自动发现已暂停') : discovery.scanning ? yt('正在检查订阅') : labels[discovery.status || ''] || yt('订阅检查尚无记录')}</span>
+    {discovery.finished_at && <time dateTime={new Date(discovery.finished_at * 1000).toISOString()} title={timeLabel(discovery.finished_at)}>
+      {yt('最近检查 {{time}}', {time: checkedAt(discovery.finished_at)})}
+    </time>}
+  </span>;
+}
+
 export function DiscoveryStatus({discovery, paused}: {discovery?: DiscoveryState; paused: boolean}) {
+  useTranslation();
   if (!discovery) return null;
   const labels: Record<string, string> = {
     healthy: yt('本轮检查完成'), partial: yt('补查未完成'), paused: yt('自动发现已暂停'),
