@@ -13,6 +13,7 @@
 }
 .yp-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
@@ -33,6 +34,7 @@
 }
 .yp-tools {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -80,6 +82,8 @@
   opacity: 0.88;
 }
 .yp-sync {
+  flex-shrink: 0;
+  white-space: nowrap;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -893,4 +897,14 @@
 .yp-capability-alert { grid-column: 1 / -1; margin: 16px 28px 0; padding: 14px 18px; border: 1px solid #c98a2e; border-radius: 10px; background: color-mix(in srgb, #f3b54a 14%, var(--panel)); }
 .yp-capability-alert.attention { border-color: #b3423a; background: color-mix(in srgb, #b3423a 10%, var(--panel)); }
 .yp-capability-alert p { margin: 6px 0; line-height: 1.6; }
+.yp-capability-wait, .yp-capability-alert { display: flex; align-items: flex-start; gap: 12px; font-family: var(--sans); }
+.yp-capability-wait > svg, .yp-capability-alert > svg { flex-shrink: 0; margin-top: 3px; }
+.yp-capability-wait > div, .yp-capability-alert > div { min-width: 0; flex: 1; }
+.yp-capability-wait strong, .yp-capability-alert strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+.yp-capability-wait p { margin: 3px 0 0; line-height: 1.65; }
+.yp-status-action { flex-shrink: 0; padding: 6px 9px; border-radius: 7px; font-size: 12px; line-height: 1.5; color: var(--ink); }
+@media (max-width: 640px) {
+  .yp-capability-wait, .yp-capability-alert { margin-inline: 16px; flex-wrap: wrap; }
+  .yp-status-action { margin-left: 28px; }
+}
 .yp-maintenance-tools p { line-height: 1.5; }

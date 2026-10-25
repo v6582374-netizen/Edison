@@ -12,6 +12,7 @@ import { RequestedVideo, RequestedDocument } from "./youtube/RequestedVideo";
 import { YouTubeSessionSettings } from "./YouTubeSessionSettings";
 import { OfficialAuthorization } from "./youtube/OfficialAuthorization";
 import { CapabilityNotice } from "./youtube/CapabilityHealth";
+import { RuntimeDetails } from "./youtube/RuntimeDetails";
 import { AcceptancePanel } from "./youtube/AcceptancePanel";
 import { Dialog } from "./youtube/Dialog";
 import { DocumentViews, ChannelAvatar } from "./youtube/DocumentViews";
@@ -74,8 +75,9 @@ export function YouTubeView({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [panel, setPanel] = useState<
-    "channels" | "connection" | "document" | null
+    "channels" | "connection" | "document" | "runtime" | null
   >(null);
+  const runtimeReturnPanel = useRef<"document" | null>(null);
   const [panelMessage, setPanelMessage] = useState("");
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelReady, setPanelReady] = useState(false);
@@ -220,10 +222,17 @@ export function YouTubeView({
   }, [refreshActivity]);
   const close = (input: ModalInput = modal.input()) => {
     if (panel !== "document") modal.end(input);
-    panelRevision.current++;
-    setPanel(null);
+    if (panel !== "runtime") panelRevision.current++;
+    setPanel(panel === "runtime" ? runtimeReturnPanel.current : null);
+    runtimeReturnPanel.current = null;
     setPanelMessage("");
     setConfirmDelete(false);
+  };
+  const openRuntimeDetails = () => {
+    modal.begin();
+    runtimeReturnPanel.current = panel === "document" ? "document" : null;
+    setPanel("runtime");
+    setPanelMessage("");
   };
   const syncSubscriptions = async (version: number) => {
     setSubscriptionsSyncing(true);
@@ -396,7 +405,8 @@ export function YouTubeView({
   return (
     <main ref={mainRef} tabIndex={-1} {...modal.capture} className={`yp-main${page === "documents" ? " yp-documents" : ""}`} aria-label={yt("YouTube 资料库")}>
       <NoticeStack messages={[message, progressMessage, panel ? "" : panelMessage, activity?.discovery_error || ""].map(value => value ? yt(value) : "")} />
-      <CapabilityNotice health={activity?.health} />
+      <CapabilityNotice health={activity?.health}
+        onConnection={() => void openPanel("connection")} onDetails={openRuntimeDetails} />
       {activity?.cutover?.held && <section aria-label={yt("YouTube 切换暂停")} className="yp-maintenance" role="region">
         <strong>{yt(activity.cutover.state === "incompatible" ? "程序与资料不兼容 · 只读阅读" : activity.cutover.state === "aborted" ? "切换已中止 · 采集暂停" : "YouTube 切换暂停")}</strong>
         <p>{yt(activity.cutover.reason || "")}</p>
@@ -595,7 +605,8 @@ export function YouTubeView({
         {page === "add" ? <AddVideo onAccepted={acceptedVideo} /> : page === "progress" ? (<>
           {requestedVideo && <RequestedVideo videoId={requestedVideo} onDocument={openRequestedDocument} />}
           <ProgressPage actionsTarget={progressActions} activity={activity} receivedAt={activityReceivedAt} disconnected={activityError}
-            onRefresh={refreshActivity} onModelSettings={onModelSettings} onNotice={setProgressMessage} />
+            onRefresh={refreshActivity} onModelSettings={onModelSettings} onNotice={setProgressMessage}
+            onRuntimeDetails={openRuntimeDetails} />
         </>) : page === "activity" ? (
           <ActivityPage activity={activity} disconnected={activityError} />
         ) : requestedDocument ? <RequestedDocument key={requestedDocument.video_id} asset={requestedDocument} onClose={() => setRequestedDocument(null)} /> : loading ? (
@@ -815,9 +826,9 @@ export function YouTubeView({
       </aside>}
       <Dialog
         wide={panel === "connection"}
-        open={panel === "channels" || panel === "connection"} interaction={modal} fallbackFocusRef={mainRef}
-        title={panel === "channels" ? yt("订阅频道") : panel === "connection" ? yt("连接 YouTube") : yt("文档信息")}
-        subtitle={panel === "channels" ? yt("默认自动生成所有订阅频道的阅读文档。") : panel === "connection" ? yt("分别完成官方订阅授权与服务器内容登录；连接保存在此 Edison 实例。") : selected?.channel_title}
+        open={panel === "channels" || panel === "connection" || panel === "runtime"} interaction={modal} fallbackFocusRef={mainRef}
+        title={panel === "runtime" ? yt("运行详情") : panel === "channels" ? yt("订阅频道") : panel === "connection" ? yt("连接 YouTube") : yt("文档信息")}
+        subtitle={panel === "runtime" ? yt("连接状态、订阅检查与最近活动") : panel === "channels" ? yt("默认自动生成所有订阅频道的阅读文档。") : panel === "connection" ? yt("分别完成官方订阅授权与服务器内容登录；连接保存在此 Edison 实例。") : selected?.channel_title}
         onClose={close}
         footer={panel === "channels" ? (
             <>
@@ -851,6 +862,7 @@ export function YouTubeView({
             </>
         ) : null}
       >
+        {panel === "runtime" && <RuntimeDetails activity={activity} receivedAt={activityReceivedAt} disconnected={activityError} />}
         {panelMessage && <p role="status" className="yp-inline-note">{yt(panelMessage)}</p>}
         {panel === "channels" && (<>
           <div className="yp-inline-note">

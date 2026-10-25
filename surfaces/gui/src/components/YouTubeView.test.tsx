@@ -369,3 +369,68 @@ it("shows an older program as read-only without maintenance actions", async () =
   expect(region.textContent).toContain("程序与资料不兼容 · 只读阅读");
   expect(within(region).queryByRole("button")).toBeNull();
 });
+
+const runtimeHealth = {
+  capabilities: Object.fromEntries(["subscriptions", "captions"].map(name => [name, {
+    state: "available", fault: null, reason: null, next_check_at: null,
+    last_success_at: 1800000000, last_failure_at: 1799900000, since: null,
+  }])),
+  notice: {level: "none"},
+  maintenance: {state: "idle", last_started_at: null, last_ended_at: null, last_basis: null, last_result: null},
+  progress: {last_stage_at: 1800000000, last_ready_at: 1800000000},
+};
+
+it("keeps diagnostics secondary and opens them without starting any request", async () => {
+  const implementation = call.getMockImplementation()!;
+  call.mockImplementation(async (capability, args) => capability === "activity.snapshot" ? {
+    ...activity, model_ready: true, health: runtimeHealth,
+    discovery: {status: "partial", finished_at: 1800000000},
+  } : implementation(capability, args));
+  render(<YouTubeView onModelSettings={() => {}} onTranslationSettings={() => {}} />);
+  await screen.findByText("部分频道尚待检查");
+  expect(screen.queryByRole("region", {name: "能力状态"})).toBeNull();
+  expect(screen.queryByText("YouTube Data API")).toBeNull();
+  expect(screen.queryByText("后台在线")).toBeNull();
+  const requests = call.mock.calls.length;
+  fireEvent.click(screen.getByRole("button", {name: "运行详情"}));
+  const dialog = await screen.findByRole("dialog", {name: "运行详情"});
+  expect(within(dialog).getByRole("region", {name: "能力状态"})).toBeTruthy();
+  expect(within(dialog).getByText("YouTube Data API")).toBeTruthy();
+  expect(within(dialog).getAllByText(/最近成功：/)).toHaveLength(2);
+  expect(call.mock.calls.length).toBe(requests);
+  fireEvent.keyDown(document, {key: "Escape"});
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("offers the existing connection dialog only after an explicit action", async () => {
+  const implementation = call.getMockImplementation()!;
+  call.mockImplementation(async (capability, args) => capability === "activity.snapshot" ? {
+    ...activity, health: {...runtimeHealth, notice: {level: "attention", capability: "captions", category: "user"}},
+  } : capability === "connection.status" ? {configured: true, authorized: true, subscriptions_count: 1}
+    : implementation(capability, args));
+  render(<YouTubeView onModelSettings={() => {}} onTranslationSettings={() => {}} />);
+  const alert = await screen.findByRole("alert", {name: "YouTube 能力提示"});
+  expect(call.mock.calls.some(([name]) => name === "connection.status" || name.startsWith("content_session."))).toBe(false);
+  fireEvent.click(within(alert).getByRole("button", {name: "查看连接"}));
+  await screen.findByRole("dialog", {name: "连接 YouTube"});
+  await waitFor(() => expect(call.mock.calls.some(([name]) => name === "connection.status")).toBe(true));
+  expect(call.mock.calls.some(([name]) => name === "content_session.open" || name === "connection.authorize")).toBe(false);
+});
+
+it("returns to the selected document and accepts its pending summary after details close", async () => {
+  const implementation = call.getMockImplementation()!;
+  let finishSummary!: (value: {summary: string}) => void;
+  call.mockImplementation(async (capability, args) => capability === "activity.snapshot" ? {
+    ...activity, health: {...runtimeHealth, notice: {level: "waiting", capability: "captions", category: "network"}},
+  } : capability === "summary.ensure" ? new Promise(resolve => {finishSummary = resolve;}) : implementation(capability, args));
+  renderDocuments(() => {});
+  fireEvent.click(await screen.findByRole("button", {name: /Prepared manuscript/}));
+  await screen.findByText("正在生成摘要…");
+  fireEvent.click(screen.getByRole("button", {name: "查看运行详情"}));
+  await screen.findByRole("dialog", {name: "运行详情"});
+  finishSummary({summary: "等候期间返回的摘要"});
+  fireEvent.keyDown(document, {key: "Escape"});
+  await screen.findByText("等候期间返回的摘要");
+  expect(screen.getByRole("button", {name: "关闭文档信息"})).toBeTruthy();
+  expect(call.mock.calls.filter(([name]) => name === "summary.ensure")).toHaveLength(1);
+});

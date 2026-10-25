@@ -29,9 +29,9 @@ it("keeps an ordinary wait as a quiet status and escalates without asking for a 
   rerender(<CapabilityNotice health={health({ level: "escalated", capability: "captions", category: "network",
     reason: "x", since: 1_800_000_000, next_check_at: 1_800_021_600 })} />);
   const alert = screen.getByRole("alert", { name: "YouTube 能力提示" });
-  expect(alert.textContent).toContain("字幕能力已中断超过 24 小时");
+  expect(alert.textContent).toContain("字幕获取已中断超过 24 小时");
   expect(alert.textContent).toContain("无需点击重试");
-  expect(alert.textContent).toContain(`开始于：${at(1_800_000_000)}`);
+  expect(alert.textContent).not.toContain("开始于：");
 });
 
 it("separates security verification, reauthorization and maintenance guidance", () => {
