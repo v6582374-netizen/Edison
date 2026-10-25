@@ -1,0 +1,22 @@
+[Unit]
+Description=Edison authorized classroom captions and edited transcripts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=edison
+Group=edison
+WorkingDirectory=/srv/edison/work
+EnvironmentFile=/etc/edison.env
+Environment=COWORKER_STATE_DIR=/srv/edison/state
+ExecStart=/srv/edison/app/venv/bin/python /srv/edison/app/src-tree/scripts/sync_classrooms.py --max-lessons 4
+TimeoutStartSec=45min
+MemoryMax=512M
+CPUQuota=50%
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/edison/state /srv/edison/work
