@@ -47,7 +47,7 @@ from .tools.toolreq import request_tool_tool
 from .tools.subagent import explorer_tools
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
-from .tools.shell import LocalExecutor
+from .tools.shell import LocalExecutor, ShellIsolationUnavailable
 from .tools.todo import TodoList
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
@@ -264,7 +264,12 @@ def build_engine(
 
     workspace_trusted = bool(ws and WorkspaceTrustStore().is_trusted(ws))
     config = load_config(ws, workspace_trusted=workspace_trusted)
-    executor = LocalExecutor(cwd=ws) if ws is not None else None
+    try:
+        executor = LocalExecutor(cwd=ws) if ws is not None else None
+    except ShellIsolationUnavailable:
+        # Other tools and the web session remain usable when this host cannot isolate
+        # shell writes. The capability catalog omits shell tools without an executor.
+        executor = None
     todo = TodoList()
     context = AgentContext(
         workspace=ws, executor=executor, todo=todo, roots=root_list or None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -350,6 +352,66 @@ def test_ws_simple_turn(tmp_path):
         types = _drain(ws)
         assert "assistant_message" in types
         assert "turn_end" in types
+
+
+def test_web_session_survives_unavailable_shell_isolation(tmp_path, monkeypatch):
+    from coworker.tools import shell as shell_module
+
+    def unavailable(argv, state_root):
+        raise shell_module.ShellIsolationUnavailable("no supported filesystem sandbox")
+
+    monkeypatch.setattr(shell_module, "_sandboxed_argv", unavailable)
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hello")]))
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/web-no-shell?agent=cowork") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        assert manager._engines["web-no-shell"].executor is None
+        assert "run_shell" not in manager._engines["web-no-shell"].registry.names()
+        ws.send_json({"type": "user_message", "text": "hello"})
+        assert "assistant_message" in _drain(ws)
+    assert manager.session_store.load("web-no-shell").workspace == str(tmp_path)
+
+
+def test_web_session_cannot_use_readonly_grant_to_execute_awk(tmp_path):
+    marker = tmp_path / "marker"
+    command = f'''awk 'BEGIN {{ "touch {marker}" | getline }}' '''
+    manager = SessionManager(
+        workspace=tmp_path,
+        provider=ScriptedProvider([_tool("run_shell", {"command": command}), _text("done")]),
+    )
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/web-awk?agent=cowork") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        manager._engines["web-awk"].permissions.allow_readonly_for_session()
+        ws.send_json({"type": "user_message", "text": "inspect the project"})
+        assert "permission_required" in _drain(ws, on_permission="deny")
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS filesystem sandbox")
+def test_web_session_shell_cannot_write_app_settings(tmp_path):
+    from coworker.permissions import Mode
+    from coworker.secrets import state_dir
+
+    state = state_dir()
+    state.mkdir(parents=True, exist_ok=True)
+    target = state / "config.toml"
+    target.write_text("original", encoding="utf-8")
+    command = 'printf changed > "$COWORKER_STATE_DIR/config.toml"'
+    manager = SessionManager(
+        workspace=tmp_path,
+        mode=Mode.BYPASS_APPROVALS,
+        provider=ScriptedProvider([_tool("run_shell", {"command": command}), _text("done")]),
+    )
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/web-state?agent=cowork") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        assert manager._engines["web-state"].permissions.evaluate(
+            "run_shell", {"command": command}, None
+        ).allowed
+        ws.send_json({"type": "user_message", "text": "run command"})
+        assert "tool_finished" in _drain(ws)
+    assert target.read_text(encoding="utf-8") == "original"
 
 
 def test_ws_rejects_oversized_message(tmp_path):

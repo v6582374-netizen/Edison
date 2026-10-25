@@ -535,7 +535,8 @@ class SessionManager:
         if not src:
             engine = self._engines.get(session_id)
             executor = getattr(engine, "executor", None) if engine else None
-            src = str(executor.cwd) if executor else None
+            roots = getattr(engine, "roots", None) if engine else None
+            src = str(executor.cwd) if executor else (str(roots[0].path) if roots else None)
         if not src or not self.is_temp_workspace(src) or not Path(src).is_dir():
             return {"ok": False, "error": "this session is not in a temporary folder"}
         if self.is_running(session_id):
@@ -5159,7 +5160,9 @@ class SessionManager:
 
     def save(self, session_id: str, engine: TurnEngine, touch: bool = True) -> None:
         executor = getattr(engine, "executor", None)
-        workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+        roots = getattr(engine, "roots", None) or []
+        current = str(executor.cwd) if executor else (str(roots[0].path) if roots else "")
+        workspace = os.path.realpath(current) if current else ""
         self.session_store.save(
             SessionRecord(
                 session_id=session_id,
@@ -5436,10 +5439,12 @@ class SessionManager:
         if engine is None:
             return {"ok": False, "error": "no live session to promote"}
         executor = getattr(engine, "executor", None)
-        current = str(executor.cwd) if executor is not None else None
+        roots = getattr(engine, "roots", None)
+        current = str(executor.cwd) if executor is not None else (
+            str(roots[0].path) if roots else None
+        )
         if not current or not self.is_temp_workspace(current):
             return {"ok": False, "error": "this session already has a workspace"}
-        roots = getattr(engine, "roots", None)
         if roots is None:
             return {"ok": False, "error": "this session has no directory list"}
         # Shared list: permissions, file tools, and the context injector see the new
@@ -5448,14 +5453,14 @@ class SessionManager:
             RootDir(path=resolved, writable=True, label="workspace"),
             *[r for r in roots if r.path != resolved],
         ]
-        try:
-            # Move the live shell too — save() derives the persisted workspace from the
-            # executor's cwd, so this is also what makes the promotion durable.
-            res = executor.run(f"cd {shlex.quote(str(resolved))}", timeout=15)
-            if res.get("exit_code") != 0:
-                executor.cwd = str(resolved)
-        except Exception:
-            executor.cwd = str(resolved)  # a respawned shell starts there
+        if executor is not None:
+            try:
+                # Move the live shell too; save() also handles sessions without one.
+                res = executor.run(f"cd {shlex.quote(str(resolved))}", timeout=15)
+                if res.get("exit_code") != 0:
+                    executor.cwd = str(resolved)
+            except Exception:
+                executor.cwd = str(resolved)  # a respawned shell starts there
         self.save(session_id, engine)
         self.session_store.touch_workspace(str(resolved))
         self._promotion_rebuild.add(session_id)
