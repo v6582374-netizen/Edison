@@ -1,10 +1,12 @@
 # Edison
 
-Edison's product language covers the YouTube reading workbench and Curriculum.
+Edison's product language covers the YouTube reading workbench, Curriculum and the independent EPUB Reader.
 
 minimalism (the focus module) has been removed. items (object memory) is retained only in the ignored `.local/items/` archive; it has no Web entry, settings, API or release payload. See ADR 0015.
 
 ## YouTube reading language
+
+- **Continuous YouTube availability（YouTube 持续可用）**: After initial connection, Edison continues its authorized background work through ordinary credential expiry, closed browser pages and service restarts without the person manually moving credentials. Google revocation or an explicit security challenge may require the person to sign in again; this does not promise access to every video. _Avoid_: Permanent credentials, never needing verification, connected account equals available captions.
 
 - **Content freshness（内容新鲜度）**: The age of a source video measured from its freshness reference time, independently of when Edison first observes it. _Avoid_: Discovery recency, latest imported item.
 - **Freshness reference time（新鲜度起算时刻）**: The reference for a video's automatic-preparation age: its public publication time for an ordinary video, or its reliably established actual end time for a live stream or YouTube Premiere. It does not replace the original publication time. _Avoid_: Discovery time, scheduled end, subtitle availability time.
@@ -39,7 +41,9 @@ minimalism (the focus module) has been removed. items (object memory) is retaine
 - **Shorts exclusion（Shorts 排除）**: The automatic exclusion of platform Shorts from new manuscript preparation, including previously queued work. Existing manuscripts remain retained knowledge assets.
 - **Pending classification（待确认类型）**: A discovered video whose platform format cannot yet be established. It waits for another check without acquiring subtitles or generating a manuscript.
 - **YouTube cooldown（YouTube 冷却）**: A shared waiting period imposed after YouTube limits requests. It suspends further YouTube acquisition across the workbench while preserving existing reading assets, and survives restart or manual queue changes.
-- **Rate-limit waiting（限流等待）**: A video's recoverable preparation state while platform access is restricted. It can resume after cooldown or be cancelled; repeated throttling eventually requires an explicit retry.
+- **Rate-limit waiting（限流等待）**: A video's recoverable preparation state while platform access is restricted. Shared, low-frequency recovery checks can resume eligible work after cooldown without an explicit retry; waiting does not override cancellation or execution permission. _Avoid_: Exhausted video budget, permission to bypass cooldown.
+- **Capability recovery check（能力恢复探测）**: A bounded check of an interrupted service capability shared by its waiting work, rather than another attempt for every affected video. Success permits eligible work to resume but does not restore cancelled tasks or disconnected identities. _Avoid_: Unlimited video retries, browser restart on every error.
+- **Caption availability waiting（字幕可用性等待）**: A bounded wait for one accessible video's source captions after service access has been established and network, throttling and authentication barriers have been ruled out. An empty acquisition result alone does not establish this state. _Avoid_: Login challenge, service outage, proof that captions will never exist.
 - **Subscription source**: A YouTube channel imported from the person's connected account whose videos may be considered for automatic preparation. The channel is distinct from the interface used to discover its videos. _Avoid_: RSS feed, manual video submission.
 - **Candidate**: A newly discovered subscription update that has not yet earned the user's reading time.
 - **Batch manuscript preparation**: The deliberate choice to acquire content and generate a full Chinese deep-reading manuscript for discovered updates before the person chooses what to read, except updates whose preparation the person has cancelled.
@@ -59,6 +63,14 @@ minimalism (the focus module) has been removed. items (object memory) is retaine
 - **Edison instance（Edison 实例）**: The single running Edison that holds all of one person's durable assets and does their continuous work on a server the person controls, reached from any of their devices through a browser. There is exactly one instance per person; devices are views onto it, never separate copies. _Avoid_: Desktop app, local install, cloud service, account.
 - **Self-hosted workspace（自托管资料库）**: The knowledge store inside the person's Edison instance. No product-operated cloud copy or synchronization service exists; all durable assets remain on the server the person controls. _Avoid_: Local-only workspace, per-device library, sync.
 - **Credential boundary**: Credentials belong to connection or model settings and remain outside document assets and exports. A document does not own or carry credentials.
+- **Edison sign-in（Edison 登录）**: The person's authenticated access to their Edison workspace, distinct from permission for Edison to access Google or YouTube. _Avoid_: YouTube connection, background-work permission.
+- **Google authorization（Google 官方授权）**: The person's grant for Edison to read their YouTube subscriptions and permitted official video information. It does not establish a YouTube content session or permission to download every video's captions. _Avoid_: Edison sign-in, caption availability.
+- **YouTube content session（YouTube 内容会话）**: The person's signed-in YouTube context used by Edison to acquire source content within its supported scope. It is distinct from Google authorization, even when both use the same Google account. _Avoid_: Subscription authorization, guaranteed caption access.
+- **YouTube account consistency（YouTube 账号一致性）**: The person's confirmation that Google authorization and the YouTube content session use the same Google account. Edison does not independently verify this identity match; a YouTube channel identity is not a substitute. _Avoid_: Automatically verified account match, dedicated profile means separate account.
+- **YouTube disconnection（断开 YouTube）**: The person's withdrawal of both YouTube connections from their Edison instance, ending their use and clearing their stored credentials while retaining existing knowledge assets. Reconnection requires explicit intent, and local removal does not establish successful revocation at Google. _Avoid_: Edison logout, subscription-only disconnection, asset deletion.
+- **YouTube cutover hold（YouTube 切换暂停）**: A temporary maintenance barrier against new YouTube work and competing connection changes while the instance changes its acquisition path. It preserves the person's Auto Update choice and accepted manual requests. _Avoid_: User cancellation, turning Auto Update off, proof that active work has finished.
+- **Edison code rollback（Edison 程序回退）**: Returning the instance to a compatible earlier program while retaining its latest knowledge assets, reading records and user permissions; acquisition may remain stopped. It does not restore old credentials or rewind the workspace to an earlier snapshot. _Avoid_: Whole-library restore, automatic return to the old acquisition path.
+- **Capability-specific interruption（按能力中断）**: An interruption that prevents only work depending on the unavailable capability; independent discovery, translation or reading can continue. Restored availability does not override task eligibility, cancellation or the person's execution permissions. _Avoid_: Entire workspace outage, automatic restoration of cancelled work.
 - **Workspace**: The browser-facing environment of the person's Edison instance in which a person monitors subscriptions, prepares manuscript batches, chooses a reading queue, and reads or annotates knowledge assets.
 - **Migration boundary**: The smallest self-contained YouTube capability that can move from Vegapunk into this product without importing unrelated research-agent behavior.
 - **Preparation state**: The operational state of a discovered update: discovered, queued, awaiting classification, acquiring, generating, ready, unavailable, failed, cancelled or excluded as Shorts. Uncertain and excluded videos remain visible in preparation progress; no manuscript is fabricated without a source transcript.
@@ -119,8 +131,16 @@ The preserved, unedited transcription supplied by the classroom recording platfo
 _Avoid_: Classroom document, corrected transcript, complete classroom record
 
 **Classroom document（课堂整理文档）**:
-A reading document organized from source material for a platform-recorded class. Its initial form is detailed classroom notes intended for exam revision; future documents for the same class may have different editorial emphases.
+A reading document organized from source material for a platform-recorded class. It can be an edited transcript or detailed revision notes; neither replaces its source transcript.
 _Avoid_: Raw subtitles, course definition
+
+**Edited classroom transcript（字幕整理稿）**:
+A lightly edited, time-referenced rendering of platform captions. It may remove meaningless repetitions and fillers, correct clear typos and improve punctuation and paragraphing, while preserving substantive content, language and order without adding explanations.
+_Avoid_: Summary, expanded lecture, guaranteed complete speech record
+
+**Classroom backup（课堂本地备份）**:
+A retained copy of the same reader-visible classroom document versions on the person's device. A server archive and a device backup can be current at different times.
+_Avoid_: Another Edison instance, browser cache, Git push
 
 **Recorded class（录播课次）**:
 A classroom session identified and listed by the classroom recording platform. It is the unit of classroom document archiving, distinct from a scheduled course occurrence or a single numbered class period.
@@ -133,3 +153,62 @@ _Avoid_: Original platform subtitles, inferred missing speech
 **Course archive（课程档案）**:
 The Curriculum collection of classroom documents, grouped by course by default. Source transcripts are retained separately from its reader-facing documents.
 _Avoid_: Object Archive, deleted courses
+
+
+## Learning Gather language
+
+**Learning Gather（学习 Agent 空间）**:
+The person's conversations with learning agents around their current core goals, including group conversations and private conversations.
+_Avoid_: Human social network, general activity feed
+
+**Core learning goal（核心学习目标）**:
+A learning outcome deliberately selected by the person to guide agents' assistance. The goal is distinct from individual practice prompts and any one conversation.
+_Avoid_: Reminder schedule, chat topic
+
+**Proactive learning message（主动学习消息）**:
+A message initiated by a learning agent to help the person progress toward a core learning goal. Its presence in a conversation is distinct from a notification outside Edison.
+_Avoid_: External notification, proof of learning progress
+
+**Learning notification（学习通知）**:
+An optional notice outside the learning conversation that draws the person's attention to a learning message. It is independent of whether agents may create messages inside Edison.
+_Avoid_: Learning message, required reply
+
+## Reader language
+
+**Reader（阅读器）**:
+The person's independent reading module for deliberately imported EPUB books, entered from Edison navigation and occupying its main content area. Its books and reading records belong to the person's Edison instance rather than a required Readwise account.
+_Avoid_: Readwise client, narrow browser sidebar, YouTube workbench
+
+**Reader book（阅读器书籍）**:
+An EPUB deliberately imported into Reader, together with its book identity and reading records. It is distinct from a generated YouTube manuscript or a classroom document.
+_Avoid_: Knowledge asset, classroom document, rendered page
+
+**Reader location（阅读器归类）**:
+The person's placement of a book in Inbox, Later or Archive. Placement expresses attention and organization, independently of the point reached in its text.
+_Avoid_: Reading position, deletion, YouTube reading state
+
+**Reading position（阅读位置）**:
+The place in a book from which the person can resume reading. It remains meaningful when the text is displayed with a different font size or window width.
+_Avoid_: Scroll percentage, Reader location, fixed screen page
+
+**Reader progress（阅读器进度）**:
+The furthest text position the person has reached through navigation. It never decreases when they revisit earlier text, and changing the layout does not advance it. A deliberate jump counts as reaching that location, not proof that the intervening text was read or understood. It is independent of the current stopping position.
+_Avoid_: Current scroll offset, Reader location, proof of comprehension
+
+**Reader highlight（阅读器高亮）**:
+A passage selected by the person and retained in association with its source text in a book. Changes to its display do not change which passage was selected.
+_Avoid_: Screenshot, copied quotation without a source
+
+**Reader note（阅读器笔记）**:
+The person's commentary associated with a book or a highlighted passage. It remains distinct from the source text.
+_Avoid_: Rewritten source, generated summary
+
+
+**Reader Notebook（阅读器笔记本）**:
+The collection of a book's highlighted passages and the person's notes about the book or those passages. Returning to a quotation leads to its original context, while a passage that can no longer be verified remains visible as needing repair rather than being silently relocated.
+_Avoid_: Source text, reading position, generated summary
+
+
+**Reader search result（阅读器查找结果）**:
+A matching passage or saved note associated with its book and original context. Following a result must identify that context rather than merely find similar words. A result is not itself a highlight or evidence of having read the passage.
+_Avoid_: New annotation, proof of reading, percentage location

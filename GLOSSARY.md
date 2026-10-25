@@ -1,14 +1,3 @@
-# Edison
+# Edison 领域术语
 
-Edison 的物品记忆与个人专注领域用语。
-
-## Language
-
-**items**：记录个人物品、物品资料与记忆的模块。
-_Avoid_：以 minimalism 指代现有物品模块
-
-**minimalism**：帮助使用者把注意力集中于当前一件事，完成后直接推进下一件的专注模块。
-_Avoid_：物品管理、任务看板
-
-**当前事项**：队列中排在第一位、此刻专注完成的一件事。
-_Avoid_：并行任务
+当前领域术语统一维护于 [CONTEXT.md](./CONTEXT.md)。原物品记忆与专注模块的历史说明不再代表现有产品，边界变更见 [ADR 0015](./docs/adr/0015-remove-focus-park-items-locally.md)。

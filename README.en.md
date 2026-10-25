@@ -43,7 +43,7 @@ by --help
 ### From GitHub (latest dev version)
 
 ```bash
-pipx install "git+https://github.com/v6582374-netizen/YouTube-StrataRead.git"
+pipx install "git+https://github.com/v6582374-netizen/Edison.git"
 ```
 
 ### Local development
