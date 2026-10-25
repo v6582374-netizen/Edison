@@ -140,6 +140,8 @@ interface Props {
   curriculumActive?: boolean;
   onOpenCourseArchive?: () => void;
   courseArchiveActive?: boolean;
+  onOpenReader?: () => void;
+  readerActive?: boolean;
   onOpenYouTube?: () => void;
   youtubeActive?: boolean;
   onOpenScheduled: () => void;
@@ -1048,6 +1050,11 @@ export function Sidebar(props: Props) {
           className={"w-full flex items-center gap-2 pl-9 pr-2.5 py-1.5 rounded-lg text-[12px] text-left hover:bg-chromeHover " + (props.courseArchiveActive ? "text-ink bg-chromeHover" : "text-muted")}
           onClick={props.onOpenCourseArchive}>
           <Icon name="book" size={14} /><span>{t("course_archive.title")}</span>
+        </button>
+        <button data-testid="nav-reader" aria-current={props.readerActive ? "page" : undefined}
+          className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.readerActive ? "text-ink bg-chromeHover" : "text-muted")}
+          onClick={props.onOpenReader}>
+          <Icon name="book" size={18} /><span>Reader</span>
         </button>
         <button data-testid="nav-youtube" aria-current={props.youtubeActive ? "page" : undefined}
           className={"w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-chromeHover " + (props.youtubeActive ? "text-ink bg-chromeHover" : "text-muted")}

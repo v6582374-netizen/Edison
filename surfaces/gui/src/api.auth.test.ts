@@ -1,8 +1,17 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { getHealth, Session } from "./api";
+import { getHealth, Session, youtubeCapability } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("identifies an expired Edison login before reporting a YouTube failure", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify({ error: "login required" }), { status: 401 },
+  )));
+  await expect(youtubeCapability("session_cookies.status")).rejects.toThrow(
+    "Edison 登录已失效，请在新标签页打开 /login 重新登录，再返回重试。无需更换 YouTube Cookie。",
+  );
 });
 
 it("authenticates REST and session WebSocket calls with the launch token", async () => {

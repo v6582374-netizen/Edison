@@ -5,13 +5,17 @@ declare const __COWORKER_DEV_TOKEN__: string;
 // Endpoint resolution order: runtime-injected globals (Tauri sets `window.__COWORKER_HTTP__`
 // for its dynamically-chosen sidecar port) → Vite env → the 127.0.0.1:8765 dev default. This
 // keeps a single codebase: browser `npm run dev` hits 8765; the desktop shell hits its sidecar.
+const selfHostedOrigin = (): string | null =>
+  globalThis.location?.protocol === "https:" ? globalThis.location.origin : null;
 const httpBase = (): string =>
   (globalThis as any).__COWORKER_HTTP__ ||
   (import.meta as any).env?.VITE_COWORKER_HTTP ||
+  selfHostedOrigin() ||
   "http://127.0.0.1:8765";
 const wsBase = (): string =>
   (globalThis as any).__COWORKER_WS__ ||
   (import.meta as any).env?.VITE_COWORKER_WS ||
+  (selfHostedOrigin() ? selfHostedOrigin()!.replace(/^https:/, "wss:") : null) ||
   "ws://127.0.0.1:8765";
 const apiToken = (): string =>
   (globalThis as any).__COWORKER_API_TOKEN__ ||
@@ -2548,6 +2552,12 @@ export async function youtubeCapability<T>(capability: string, arguments_: Recor
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capability, arguments: arguments_ }),
   });
+  if (response.status === 401) {
+    const failure = await response.clone().json().catch(() => null);
+    if (failure?.error === "login required") {
+      throw new Error("Edison 登录已失效，请在新标签页打开 /login 重新登录，再返回重试。无需更换 YouTube Cookie。");
+    }
+  }
   if (!response.ok) throw new Error(`YouTube 服务暂时不可用 (${response.status})`);
   const data = await response.json();
   if (!data.ok) throw new Error(data.error || "操作未完成，请重试。");
@@ -2566,11 +2576,14 @@ export interface RecordedClass {
   id: string; course: string; name: string; title: string; date: string;
   first: number; last: number; teacher: string; room: string; source_url: string;
   state: string; detail: string; warnings: string[]; documents: ClassroomDocumentSummary[];
+  history?: ClassroomDocumentSummary[];
 }
 export interface CourseArchiveSnapshot {
   recordings: RecordedClass[];
   courses: { key: string; name: string }[];
   coverage: Record<string, { from: string; through: string; complete: boolean; checked_at?: string }>;
+  automation?: { enabled?: boolean; checked_at?: string; preparing?: string | null; pending?: number; errors?: Record<string, string>; generation_error?: string };
+  backup?: { state?: string; checked_at?: string; files?: number; conflicts?: string[] };
 }
 export interface ClassroomDocument extends ClassroomDocumentSummary { markdown: string; recording_id: string }
 async function curriculumRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -2604,5 +2617,85 @@ export async function downloadClassroomDocument(id: string, title: string) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export interface ReaderBook {
+  id: string; sha256: string; content_version: string; content_rule: string;
+  filename: string; title: string; author: string; language: string; sections: number;
+  size: number; location: "inbox" | "later" | "archive"; revision: number; created_at: number;
+}
+export class ReaderRequestError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+async function readerResponse(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(`${httpBase()}/v1/reader/${path}`, init);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ReaderRequestError(response.status, typeof body.detail === "string" ? body.detail : `Reader: ${response.status}`);
+  }
+  return response;
+}
+export const getReaderBooks = async (): Promise<{books: ReaderBook[]}> => (await readerResponse("books")).json();
+export const getReaderBook = async (id: string): Promise<ReaderBook> => (await readerResponse(`books/${encodeURIComponent(id)}`)).json();
+export const importReaderBook = async (file: File): Promise<{book: ReaderBook; created: boolean}> =>
+  (await readerResponse("books", {method: "POST", headers: {"Content-Type": "application/epub+zip", "X-Reader-Filename": encodeURIComponent(file.name)}, body: file})).json();
+export const placeReaderBook = async (book: ReaderBook, location: ReaderBook["location"]): Promise<ReaderBook> =>
+  (await readerResponse(`books/${encodeURIComponent(book.id)}`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({location, revision: book.revision})})).json();
+export const getReaderOriginal = async (id: string, signal?: AbortSignal): Promise<Blob> => (await readerResponse(`books/${encodeURIComponent(id)}/original`, {signal})).blob();
+export async function downloadReaderOriginal(book: ReaderBook) {
+  const url = URL.createObjectURL(await getReaderOriginal(book.id));
+  const anchor = document.createElement("a");
+  anchor.href = url; anchor.download = `${book.title.replace(/[\\/:*?"<>|]/g, "-")}.epub`;
+  document.body.append(anchor); anchor.click(); anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export interface ReaderPosition {
+  kind: "text" | "img" | "svg" | "section";
+  cfi: string; section: string; index: number; quote: string; offset: number; length: number;
+}
+export interface ReaderPreferences {font_size: 16 | 20 | 24 | 28 | 32; contents_open: boolean}
+export interface ReaderReading {
+  content_version: string; revision: number; position: ReaderPosition | null;
+  furthest: ReaderPosition | null; progress: number; preferences: ReaderPreferences; updated_at: number | null;
+}
+export interface ReaderReadingUpdate {
+  content_version: string; revision: number; operation_id: string;
+  position: ReaderPosition | null; furthest: ReaderPosition | null; preferences: ReaderPreferences;
+}
+export const getReaderReading = async (id: string): Promise<ReaderReading> =>
+  (await readerResponse(`books/${encodeURIComponent(id)}/reading`)).json();
+export const saveReaderReading = async (id: string, update: ReaderReadingUpdate): Promise<ReaderReading> =>
+  (await readerResponse(`books/${encodeURIComponent(id)}/reading`, {method: "PUT", keepalive: true, signal: AbortSignal.timeout(10_000),
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(update)})).json();
+
+
+export interface ReaderHighlight {id: string; anchor: ReaderPosition; color: "yellow" | "green" | "pink"; note: string}
+export interface ReaderNotebook {
+  content_version: string; revision: number; updated_at: number | null;
+  book_note: string; highlights: ReaderHighlight[];
+}
+export type ReaderNotebookUpdate = Omit<ReaderNotebook, "updated_at"> & {operation_id: string};
+export const getReaderNotebook = async (id: string): Promise<ReaderNotebook> =>
+  (await readerResponse(`books/${encodeURIComponent(id)}/notebook`)).json();
+export const saveReaderNotebook = async (id: string, update: ReaderNotebookUpdate): Promise<ReaderNotebook> =>
+  (await readerResponse(`books/${encodeURIComponent(id)}/notebook`, {method: "PUT", signal: AbortSignal.timeout(10_000),
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(update)})).json();
+
+
+export interface ReaderNoteMatch {
+  book_id: string; title: string; author: string; location: ReaderBook["location"]; content_version: string;
+  kind: "book_note" | "highlight" | "highlight_note"; highlight_id: string | null; excerpt: string;
+}
+export interface ReaderNoteResults {query: string; total: number; offset: number; results: ReaderNoteMatch[]}
+export const searchReaderNotes = async (query: string, offset = 0, signal?: AbortSignal): Promise<ReaderNoteResults> =>
+  (await readerResponse(`search?${new URLSearchParams({q: query, offset: String(offset)})}`, {signal})).json();
+export async function downloadReaderNotes(book: ReaderBook, format: "json" | "markdown") {
+  const response = await readerResponse(`books/${encodeURIComponent(book.id)}/export?format=${format}`, {signal: AbortSignal.timeout(15_000)});
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a"); link.href = url;
+  link.download = `${book.title.replace(/[\\/:*?"<>|]/g, "-")}-notes.${format === "json" ? "json" : "md"}`;
+  document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
