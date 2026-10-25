@@ -416,3 +416,21 @@ it("offers the existing connection dialog only after an explicit action", async 
   await waitFor(() => expect(call.mock.calls.some(([name]) => name === "connection.status")).toBe(true));
   expect(call.mock.calls.some(([name]) => name === "content_session.open" || name === "connection.authorize")).toBe(false);
 });
+
+it("returns to the selected document and accepts its pending summary after details close", async () => {
+  const implementation = call.getMockImplementation()!;
+  let finishSummary!: (value: {summary: string}) => void;
+  call.mockImplementation(async (capability, args) => capability === "activity.snapshot" ? {
+    ...activity, health: {...runtimeHealth, notice: {level: "waiting", capability: "captions", category: "network"}},
+  } : capability === "summary.ensure" ? new Promise(resolve => {finishSummary = resolve;}) : implementation(capability, args));
+  renderDocuments(() => {});
+  fireEvent.click(await screen.findByRole("button", {name: /Prepared manuscript/}));
+  await screen.findByText("正在生成摘要…");
+  fireEvent.click(screen.getByRole("button", {name: "查看运行详情"}));
+  await screen.findByRole("dialog", {name: "运行详情"});
+  finishSummary({summary: "等候期间返回的摘要"});
+  fireEvent.keyDown(document, {key: "Escape"});
+  await screen.findByText("等候期间返回的摘要");
+  expect(screen.getByRole("button", {name: "关闭文档信息"})).toBeTruthy();
+  expect(call.mock.calls.filter(([name]) => name === "summary.ensure")).toHaveLength(1);
+});

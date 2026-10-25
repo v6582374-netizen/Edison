@@ -33,7 +33,7 @@ test("YouTube changes modal content in place and restores its external trigger",
   // Hidden developer fields and disabled buttons cannot enter the tab cycle.
   await dialog.getByRole("button", { name: "关闭", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.locator("summary")).toBeFocused();
+  await expect(dialog.getByText("开发者设置", {exact: true})).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeFocused();
   await page.getByTestId("nav-youtube").evaluate((el: HTMLElement) => el.focus());
@@ -69,7 +69,7 @@ for (const lang of ["zh", "en"] as const) {
       await page.getByRole("button", { name: lang === "zh" ? "订阅频道" : "Subscriptions", exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: lang === "zh" ? "连接 YouTube" : "Connect YouTube", exact: true }).click();
       const dialog = page.getByRole("dialog");
-      await dialog.locator("summary").click();
+      await dialog.getByText(lang === "zh" ? "开发者设置" : "Developer settings", {exact: true}).click();
       for (const width of [800, 1100, 1440]) {
         await page.setViewportSize({ width, height: 640 });
         await expect(dialog).toBeVisible();

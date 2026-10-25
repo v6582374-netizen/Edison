@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CapabilityHealth } from "./CapabilityHealth";
 import { DiscoveryStatus } from "./DiscoveryStatus";
@@ -11,10 +12,15 @@ export function RuntimeDetails({ activity, receivedAt, disconnected }: {
   activity: Activity | null; receivedAt: number; disconnected: boolean;
 }) {
   useTranslation();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   if (!activity) return <p className="yp-runtime-empty" role="status">{yt("运行信息尚未收到，正在等待后台响应。")}</p>;
-  const stale = disconnected || !receivedAt || Date.now() - receivedAt > 12000;
+  const stale = disconnected || !receivedAt || now - receivedAt > 12000;
   const heartbeat = activity.runtime?.heartbeat_at;
-  const live = !stale && activity.runtime?.worker_alive && !!heartbeat && Date.now() - heartbeat * 1000 < 10000;
+  const live = !stale && activity.runtime?.worker_alive && !!heartbeat && now - heartbeat * 1000 < 10000;
   return <div className="yp-runtime-details">
     {stale && <p className="yp-runtime-stale" role="status">{yt("连接正在恢复，以下是最近收到的信息。")}</p>}
     <section className="yp-runtime-section" aria-label={yt("后台与模型")}>
