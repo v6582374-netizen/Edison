@@ -110,6 +110,26 @@
 .yp-progress .discovery-beacon-orb::before { inset: 9px; }
 .yp-progress .discovery-beacon-orb::after { inset: -7.5px; }
 
+.yp-progress .is-waiting .discovery-beacon-signal { padding-inline: 0; }
+.yp-progress .is-waiting .discovery-beacon-signal-head { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.discovery-waiting-dots { display: inline-block; white-space: nowrap; }
+.discovery-waiting-dots > span { opacity: 0; animation-duration: 2400ms; animation-timing-function: steps(1, end); animation-iteration-count: infinite; }
+.discovery-waiting-dots > span:first-child { opacity: 1; animation: none; }
+.discovery-waiting-dots > span:nth-child(2) { animation-name: discovery-waiting-dot-2; }
+.discovery-waiting-dots > span:nth-child(3) { animation-name: discovery-waiting-dot-3; }
+.discovery-waiting-dots > span:nth-child(4) { animation-name: discovery-waiting-dot-4; }
+.discovery-waiting-dots > span:nth-child(5) { animation-name: discovery-waiting-dot-5; }
+.discovery-waiting-dots > span:nth-child(6) { animation-name: discovery-waiting-dot-6; }
+@keyframes discovery-waiting-dot-2 { 0% { opacity: 0; } 16.6667%, 100% { opacity: 1; } }
+@keyframes discovery-waiting-dot-3 { 0% { opacity: 0; } 33.3333%, 100% { opacity: 1; } }
+@keyframes discovery-waiting-dot-4 { 0% { opacity: 0; } 50%, 100% { opacity: 1; } }
+@keyframes discovery-waiting-dot-5 { 0% { opacity: 0; } 66.6667%, 100% { opacity: 1; } }
+@keyframes discovery-waiting-dot-6 { 0% { opacity: 0; } 83.3333%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .discovery-waiting-dots > span { animation: none; opacity: 0; }
+  .discovery-waiting-dots > span:nth-child(-n+3) { opacity: 1; }
+}
+
 .yp-discovery-status { padding: 14px 18px; margin-block: 8px 16px; border: 1px solid var(--line); border-radius: 12px; font-size: 12px; }
 .yp-discovery-status-head { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: space-between; }
 .yp-discovery-status p { margin: 8px 0; color: var(--muted); }

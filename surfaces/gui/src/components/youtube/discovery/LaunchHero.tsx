@@ -2,18 +2,19 @@ import { useTranslation } from "react-i18next";
 import { yt } from "../text";
 // Adapted directly from Vegapunk PrototypeLaunchHero. See docs/upstream/vegapunk-discovery.
 export type Milestone = { id: string; label: string; summary?: string; state: "done" | "active" | "pending" };
-export function LaunchHero({ live, offline, observedStage, signalCopy, milestones, metrics }: {
+export function LaunchHero({ live, offline, waiting = false, observedStage, signalCopy, milestones, metrics }: {
   live: boolean; offline: boolean; observedStage: string; signalCopy: string;
+  waiting?: boolean;
   milestones: Milestone[]; metrics: {label: string; value: string | number; note: string}[];
 }) {
   useTranslation();
   return (
-    <section className={`discovery-prototype-panel discovery-hero-panel discovery-beacon-hero ${!live ? "is-standby" : ""} ${!milestones.length ? "is-idle" : ""} ${offline ? "is-error" : ""}`} aria-label={yt("当前处理概览")}>
+    <section className={`discovery-prototype-panel discovery-hero-panel discovery-beacon-hero ${!live ? "is-standby" : ""} ${!milestones.length ? "is-idle" : ""} ${offline ? "is-error" : ""} ${waiting ? "is-waiting" : ""}`} aria-label={yt("当前处理概览")}>
       <div className="discovery-beacon-signal">
         <div className="discovery-beacon-signal-head">
-          <div className="discovery-beacon-orb" aria-hidden="true"><span /></div>
+          {!waiting && <div className="discovery-beacon-orb" aria-hidden="true"><span /></div>}
           <div className="min-w-0">
-            <h2 className="discovery-launch-title discovery-beacon-title">{observedStage}</h2>
+            <h2 className="discovery-launch-title discovery-beacon-title">{observedStage}{waiting && <span className="discovery-waiting-dots" aria-hidden="true">{[1, 2, 3, 4, 5, 6].map(dot => <span key={dot}>.</span>)}</span>}</h2>
             {signalCopy && <p className="discovery-beacon-copy">{signalCopy}</p>}
           </div>
         </div>
