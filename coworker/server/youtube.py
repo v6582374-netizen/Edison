@@ -77,9 +77,10 @@ def _summary_text(turn: Any) -> str:
 
 
 class HostManuscripts:
-    def __init__(self, manager: Any, workspace: LocalWorkspace | None = None) -> None:
+    def __init__(self, manager: Any, workspace: LocalWorkspace | None = None, *, pipeline_factory: Any = TranslationPipeline) -> None:
         self.manager = manager
         self.workspace = workspace
+        self.pipeline_factory = pipeline_factory
 
     @property
     def account(self) -> str:
@@ -100,7 +101,7 @@ class HostManuscripts:
         checkpoint = (
             self.workspace.translation_checkpoint(video_id) if self.workspace and video_id else None
         )
-        return TranslationPipeline(
+        return self.pipeline_factory(
             self.manager.provider_complete,
             self.manager.model,
             settings(self.workspace),

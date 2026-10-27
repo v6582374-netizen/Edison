@@ -185,10 +185,23 @@ def run_baseline(
     *,
     config: dict[str, Any] | None = None,
     source_policy: str = "conservative-v1",
+    variant: str = "A-current-baseline",
+    capacity=None,
+    segmentation=None,
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
     if source_policy not in {"conservative-v1", "historical"}:
         raise ValueError("Unknown source normalization policy")
+    from dataclasses import asdict
+    from youtube_strataread.workbench.experiment_translation import CompletionCapacity, DirectTranslationPipeline, OutputSegmentation
+
+    if variant not in {"A-current-baseline", "B-direct"}:
+        raise ValueError("Unknown experiment variant")
+    if variant != "A-current-baseline":
+        if source_policy != "conservative-v1" or capacity is None:
+            raise ValueError("Direct variants require conservative source and an explicit capacity contract")
+        capacity.validate(simulated_model=model.simulated)
+    segmentation = segmentation or OutputSegmentation()
     config = validate_settings(config if config is not None else DEFAULTS)
     root = _checked_root(root, snapshot.path)
     repository = _repository()
@@ -260,10 +273,17 @@ def run_baseline(
         )
         return normalized.text
 
+    candidate_pipeline = None
+
+    def direct_factory(*args, **kwargs):
+        nonlocal candidate_pipeline
+        candidate_pipeline = DirectTranslationPipeline(*args, source_units=normalized.units, capacity=capacity, segmentation=segmentation, **kwargs)
+        return candidate_pipeline
+
     preparation = PreparationService(
         workspace,
         _SnapshotCaptions(snapshot, text),
-        HostManuscripts(manager, workspace),
+        HostManuscripts(manager, workspace, pipeline_factory=direct_factory) if variant == "B-direct" else HostManuscripts(manager, workspace),
         shorts=_SnapshotVideo(),
         transcript_normalizer=normalize,
     )
@@ -287,12 +307,17 @@ def run_baseline(
         provenance = Path(document["path"]).with_name("translation-run.json")
         (directory / "baseline-provenance.json").write_bytes(provenance.read_bytes())
         artifacts["baseline_provenance"] = "baseline-provenance.json"
+        if variant != "A-current-baseline":
+            artifacts["candidate_provenance"] = "baseline-provenance.json"
         artifacts["workspace_manuscript"] = os.path.relpath(document["path"], directory)
         artifacts["manuscript_version"] = document["version"]
     record = {
         "schema_version": 1,
         "run_id": directory.name,
-        "variant": VARIANT,
+        "variant": variant,
+        "segmentation": asdict(segmentation),
+        "capacity": asdict(capacity) if capacity else None,
+        "stage_elapsed_seconds": candidate_pipeline.stage_elapsed_seconds if candidate_pipeline else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "repository": repository,
         "upstream": {
