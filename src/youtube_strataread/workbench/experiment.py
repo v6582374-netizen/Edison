@@ -10,6 +10,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,13 @@ from youtube_strataread.workbench.experiment_provider import (
     QuotaContract,
     classify_experiment_model,
 )
+from youtube_strataread.workbench.experiment_recovery import (
+    ExperimentWorkspace,
+    StrictBaselinePipeline,
+    durable_json,
+    experiment_lock,
+    verify_attempt,
+)
 from youtube_strataread.workbench.experiment_review import ConditionalReviewPipeline, ReviewPolicy
 from youtube_strataread.workbench.experiment_source import UNAVAILABLE_REASON, normalize_captions
 from youtube_strataread.workbench.experiment_translation import (
@@ -39,12 +47,10 @@ from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
     UPSTREAM_COMMIT,
-    TranslationPipeline,
     settings,
     token_bound,
     validate_settings,
 )
-from youtube_strataread.workbench.workspace import LocalWorkspace
 
 BASE_COMMIT = "dccf993"
 VARIANT = "A-current-baseline"
@@ -204,7 +210,14 @@ def _checked_root(root: Path, source: Path) -> Path:
     return resolved
 
 
-def run_baseline(
+def run_baseline(root, snapshot, model, complete, **options) -> Path:
+    """Run a new stable attempt, or explicitly resume an identical attempt."""
+    root = _checked_root(root, snapshot.path)
+    with experiment_lock(root):
+        return _run_baseline(root, snapshot, model, complete, **options)
+
+
+def _run_baseline(
     root: Path,
     snapshot: CaptionSnapshot,
     model: ModelIdentity,
@@ -218,6 +231,9 @@ def run_baseline(
     capacity: CompletionCapacity | None = None,
     segmentation: OutputSegmentation | None = None,
     review_policy: ReviewPolicy | None = None,
+    attempt_id: str | None = None,
+    mode: str = "new",
+    publication_fault: Callable[[str], None] | None = None,
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
     if quota_contract and quota_contract.configuration_sha256 != model.configuration_sha256:
@@ -259,15 +275,49 @@ def run_baseline(
         and (not marker_path.is_file() or json.loads(marker_path.read_text()) != marker)
     ):
         raise ValueError("Experiment root is not owned by this snapshot; select a new empty path")
+    # Compute identity before touching storage, including normalization and all prompts.
+    from youtube_strataread.workbench.experiment_review import REVIEW_PROMPT
+    from youtube_strataread.workbench.experiment_translation import DIRECT_PROMPT
+    normalized_identity = None
+    if source_policy == "conservative-v1" and snapshot.source_type == "speech" and text.strip():
+        # Admission failures flow through PreparationService; raw bytes remain bound.
+        with suppress(ValueError, YouTubeError):
+            normalized_identity = normalize_captions(text, source_type=snapshot.source_type,
+                verified_rolling_pairs=snapshot.verified_rolling_pairs)
+    attempt_identity = {
+        "contract": "strict-finish-and-atomic-publication-v1",
+        "source": source_identity,
+        "normalized": normalized_identity.record() if normalized_identity else None,
+        "source_policy": source_policy, "model": asdict(model), "settings": config,
+        "variant": variant, "capacity": asdict(capacity) if capacity else None,
+        "segmentation": asdict(segmentation),
+        "review_policy": asdict(review_policy or ReviewPolicy()),
+        "direct_prompt": DIRECT_PROMPT, "review_prompt": REVIEW_PROMPT,
+        "consumption_policy": "historical" if historical_diagnostic else "no-local-budget",
+        "quota_contract": asdict(quota_contract) if quota_contract else None,
+    }
+    if mode == "resume" and attempt_id is None:
+        raise ValueError("Explicit resume requires an attempt ID")
+    attempt_id = attempt_id or uuid.uuid4().hex
+    attempt_directory = verify_attempt(root, attempt_id, mode, attempt_identity)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)
     if not marker_path.exists():
         _write_json(marker_path, marker)
+    attempt_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if mode == "new":
+        durable_json(attempt_directory / "identity.json", attempt_identity)
     directory = root / "runs" / uuid.uuid4().hex
     directory.mkdir(mode=0o700, parents=True)
+    (directory / "attempt-id").write_text(attempt_id)
     (directory / "source.srt").write_bytes(source)
     (directory / "source.srt").chmod(0o400)
-    workspace = LocalWorkspace.open(root / "workspace")
+    workspace = ExperimentWorkspace.open(root / "workspace")
+    workspace.bind_attempt(attempt_id, attempt_directory, publication_fault)
+    checkpoint = workspace.translation_checkpoint(snapshot.video_id)
+    saved = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
+    cached_before = len(saved.get("outputs", {}))
+
     # Seed settings: never read/migrate global user prompts from an experiment.
     workspace.set_meta("youtube_translation", json.dumps(config, ensure_ascii=False))
     config = settings(workspace)
@@ -283,7 +333,21 @@ def run_baseline(
             0,
         )
     )
-    workspace.queue_regeneration(snapshot.video_id)
+    published = workspace.publication()
+    current_attempt = workspace.meta("experiment_current_attempt")
+    if mode == "new":
+        workspace.queue_regeneration(snapshot.video_id)
+        workspace.set_meta("experiment_current_attempt", attempt_id)
+    elif not published:
+        state = workspace.asset(snapshot.video_id)["preparation_state"]
+        if current_attempt != attempt_id and state in {"acquiring", "generating"}:
+            raise ValueError("Another attempt is interrupted; explicitly resume that attempt first")
+        workspace.recover_interrupted_preparations()
+        workspace.retry_failed(snapshot.video_id)
+        if state == "ready":
+            workspace.set_preparation_state(snapshot.video_id, "queued")
+        if state != "cancelled":
+            workspace.set_meta("experiment_current_attempt", attempt_id)
     recorder = _RecordedCompletion(
         complete,
         directory,
@@ -297,7 +361,7 @@ def run_baseline(
         ),
     )
     manager = SimpleNamespace(model=model.id, provider_complete=recorder)
-    normalized = None
+    normalized = normalized_identity
 
     def normalize(text: str, language: str) -> str:
         nonlocal normalized
@@ -332,7 +396,7 @@ def run_baseline(
         HostManuscripts(
             manager,
             workspace,
-            pipeline_factory=direct_factory if variant != "A-current-baseline" else TranslationPipeline,
+            pipeline_factory=direct_factory if variant != "A-current-baseline" else StrictBaselinePipeline,
             pipeline_options={
                 "enforce_local_budgets": historical_diagnostic,
                 "output_tokens": capacity.output_tokens if capacity else 8192,
@@ -344,8 +408,19 @@ def run_baseline(
         transcript_normalizer=normalize,
     )
     started = time.monotonic()
-    preparation.run_next()
+    published = workspace.publication()
+    try:
+        if not published:
+            preparation.run_next()
+        elif workspace.meta("experiment_current_attempt") == attempt_id:
+            workspace.recover_publication(snapshot.video_id)
+    finally:
+        if workspace.meta("experiment_current_attempt") == attempt_id:
+            workspace.mirror_checkpoint(snapshot.video_id)
     asset = workspace.asset(snapshot.video_id)
+    if published and asset["preparation_state"] != "cancelled":
+        # A replay describes its own completed attempt without finishing newer work.
+        asset = {**asset, "preparation_state": "ready", "failure_reason": None}
     artifacts = {"raw_captions": "source.srt"}
     if candidate_pipeline is not None and variant == "C-conditional":
         _write_json(directory / "conditional-review.json", candidate_pipeline.review_events)
@@ -355,7 +430,10 @@ def run_baseline(
         (directory / "normalized-source.json").chmod(0o400)
         artifacts["normalized_source"] = "normalized-source.json"
     if asset["preparation_state"] == "ready":
-        document = workspace.document(snapshot.video_id)
+        publication = workspace.publication()
+        document = ({"path": publication["path"], "version": publication["version"],
+                     "translation_path": str(Path(publication["path"]).with_name("translation.md"))}
+                    if publication else workspace.document(snapshot.video_id))
         for name, path in [
             ("translation", document["translation_path"]),
             ("manuscript", document["path"]),
@@ -373,6 +451,19 @@ def run_baseline(
     record = {
         "schema_version": 1,
         "run_id": directory.name,
+        "attempt_id": attempt_id,
+        "mode": mode,
+        "recovery": {
+            "cached_responses_before": cached_before,
+            "published_before": bool(published),
+            "invocation_requests": len(recorder.requests),
+            "cumulative_attempt_requests": sum(
+                1 for request in (root / "runs").glob("*/request-*.json")
+                if (request.parent / "attempt-id").exists()
+                and (request.parent / "attempt-id").read_text() == attempt_id
+            ),
+            "reused_stage_wall_seconds": None,
+        },
         "variant": variant,
         "segmentation": asdict(segmentation) if variant != "A-current-baseline" else {"strategy": "upstream-current"},
         "comparison_settings": {
@@ -425,6 +516,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--attempt-id", help="Stable private generation-attempt identifier")
+    parser.add_argument("--mode", choices=("new", "resume"), default="new")
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--video-id", required=True)
     parser.add_argument("--title", default="Private experiment snapshot")
@@ -486,6 +579,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
         complete,
         variant=args.variant,
+        attempt_id=args.attempt_id,
+        mode=args.mode,
         capacity=CompletionCapacity(args.capacity_input_characters, args.output_tokens, simulated=True) if args.capacity_input_characters else None,
         segmentation=OutputSegmentation(args.output_strategy, tuple(args.chapter_end_id), args.chapter_target_characters),
         historical_diagnostic=args.historical_diagnostic,
