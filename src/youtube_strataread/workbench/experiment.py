@@ -20,13 +20,21 @@ from platformdirs import user_data_dir
 
 from coworker.secrets import state_dir
 from coworker.server.youtube import HostManuscripts
+from youtube_strataread.downloader import cues_to_lines, load_cues
+from youtube_strataread.downloader.request_policy import YouTubeError
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench.discovery import Candidate
+from youtube_strataread.workbench.experiment_provider import (
+    QuotaContract,
+    classify_experiment_model,
+)
+from youtube_strataread.workbench.experiment_source import UNAVAILABLE_REASON, normalize_captions
 from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
     UPSTREAM_COMMIT,
     settings,
+    token_bound,
     validate_settings,
 )
 from youtube_strataread.workbench.workspace import LocalWorkspace
@@ -42,6 +50,8 @@ class CaptionSnapshot:
     title: str
     language: str
     duration_seconds: float | None = None
+    source_type: str = "speech"
+    verified_rolling_pairs: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,8 +102,11 @@ class _SnapshotVideo:
 
 
 class _RecordedCompletion:
-    def __init__(self, complete: Callable[..., Any], directory: Path):
+    def __init__(
+        self, complete: Callable[..., Any], directory: Path, stage: Callable[[], str] | None = None
+    ):
         self.complete, self.directory = complete, directory
+        self.stage = stage
         self.requests: list[dict[str, Any]] = []
 
     def __call__(self, model: str, messages: list, **options: Any) -> Any:
@@ -102,6 +115,8 @@ class _RecordedCompletion:
             "model": model,
             "messages": copy.deepcopy(messages),
             "options": options,
+            "stage": self.stage() if self.stage else "unknown",
+            "estimated_input_token_bound": token_bound(json.dumps(messages, ensure_ascii=False)),
         }
         self.requests.append(request)
         path = self.directory / f"request-{len(self.requests):04d}.json"
@@ -135,6 +150,16 @@ class _RecordedCompletion:
             "requests_without_reported_usage": len(self.requests) - len(reported),
             "basis": "provider-reported token fields; zero/absent usage is unknown; failed requests may still be billed",
             "cost": None,
+            "estimated_input_token_bound": sum(
+                r["estimated_input_token_bound"] for r in self.requests
+            ),
+            "estimate_basis": "UTF-8 bytes plus 32 per request, a conservative size bound, not measured consumption",
+            "stage_request_seconds": {
+                stage: sum(
+                    r.get("elapsed_seconds", 0) for r in self.requests if r["stage"] == stage
+                )
+                for stage in sorted({r["stage"] for r in self.requests})
+            },
         }
 
 
@@ -179,8 +204,15 @@ def run_baseline(
     complete: Callable[..., Any],
     *,
     config: dict[str, Any] | None = None,
+    historical_diagnostic: bool = False,
+    quota_contract: QuotaContract | None = None,
+    source_policy: str = "conservative-v1",
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
+    if quota_contract and quota_contract.configuration_sha256 != model.configuration_sha256:
+        raise ValueError("Quota contract does not match the configured proxy identity")
+    if source_policy not in {"conservative-v1", "historical"}:
+        raise ValueError("Unknown source normalization policy")
     config = validate_settings(config if config is not None else DEFAULTS)
     root = _checked_root(root, snapshot.path)
     repository = _repository()
@@ -193,6 +225,8 @@ def run_baseline(
         "language": snapshot.language,
         "duration_seconds": snapshot.duration_seconds,
         "bytes": len(source),
+        "source_type": snapshot.source_type,
+        "verified_rolling_pairs": [list(pair) for pair in snapshot.verified_rolling_pairs],
     }
     marker = {
         "format": "edison-translation-experiment",
@@ -231,18 +265,60 @@ def run_baseline(
         )
     )
     workspace.queue_regeneration(snapshot.video_id)
-    recorder = _RecordedCompletion(complete, directory)
+    recorder = _RecordedCompletion(
+        complete,
+        directory,
+        lambda: next(
+            (
+                str(item["preparation_stage"])
+                for item in workspace.activity()["current"]
+                if item["video_id"] == snapshot.video_id
+            ),
+            "unknown",
+        ),
+    )
     manager = SimpleNamespace(model=model.id, provider_complete=recorder)
+    normalized = None
+
+    def normalize(text: str, language: str) -> str:
+        nonlocal normalized
+        if snapshot.source_type != "speech" or language == "live_chat" or not text.strip():
+            raise YouTubeError(UNAVAILABLE_REASON)
+        if source_policy == "historical":
+            cleaned = "\n".join(cues_to_lines(load_cues(text))).strip()
+            if not cleaned:
+                raise YouTubeError(UNAVAILABLE_REASON)
+            return cleaned
+        normalized = normalize_captions(
+            text,
+            source_type=snapshot.source_type,
+            verified_rolling_pairs=snapshot.verified_rolling_pairs,
+        )
+        return normalized.text
+
     preparation = PreparationService(
         workspace,
         _SnapshotCaptions(snapshot, text),
-        HostManuscripts(manager, workspace),
+        HostManuscripts(
+            manager,
+            workspace,
+            pipeline_options={
+                "enforce_local_budgets": historical_diagnostic,
+                "quota_exhausted": quota_contract.recognizes if quota_contract else None,
+            },
+        ),
         shorts=_SnapshotVideo(),
+        model_failure_classifier=classify_experiment_model,
+        transcript_normalizer=normalize,
     )
     started = time.monotonic()
     preparation.run_next()
     asset = workspace.asset(snapshot.video_id)
     artifacts = {"raw_captions": "source.srt"}
+    if normalized is not None:
+        _write_json(directory / "normalized-source.json", normalized.record())
+        (directory / "normalized-source.json").chmod(0o400)
+        artifacts["normalized_source"] = "normalized-source.json"
     if asset["preparation_state"] == "ready":
         document = workspace.document(snapshot.video_id)
         for name, path in [
@@ -269,16 +345,24 @@ def run_baseline(
         },
         "model": asdict(model),
         "source": source_identity,
+        "source_processing": {
+            "policy": source_policy,
+            "normalized_sha256": normalized.record()["sha256"] if normalized else None,
+        },
         "settings": config,
         "state": asset["preparation_state"],
         "reason": asset["failure_reason"],
         "attempts": len(recorder.requests),
+        "quota_contract": asdict(quota_contract) if quota_contract else {"verified": False},
         "usage": recorder.usage(),
         "elapsed_seconds": time.monotonic() - started,
         "artifacts": artifacts,
         "fair_long_comparison": False,
+        "consumption_policy": "historical-local-budget"
+        if historical_diagnostic
+        else "no-local-cumulative-budget",
         "limitations": [
-            "Historical local budgets and source normalization remain enabled; #71 is required for a fair long-content comparison.",
+            "Main comparison disables local cumulative budgets; historical_diagnostic explicitly retains them. Source normalization, provider and sample evidence must also match before a fair long comparison.",
             "Simulated responses establish plumbing only, not translation quality or effective provider capacity.",
         ],
     }
@@ -299,7 +383,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--video-id", required=True)
     parser.add_argument("--title", default="Private experiment snapshot")
     parser.add_argument("--language", required=True)
+    parser.add_argument(
+        "--source-type", choices=["speech", "live_chat", "absent"], default="speech"
+    )
+    parser.add_argument(
+        "--source-policy", choices=["conservative-v1", "historical"], default="conservative-v1"
+    )
     parser.add_argument("--duration-seconds", type=float)
+    parser.add_argument(
+        "--historical-diagnostic",
+        action="store_true",
+        help="Retain historical local cumulative budgets for a separate diagnostic",
+    )
     parser.add_argument(
         "--mock-responses",
         type=Path,
@@ -325,12 +420,19 @@ def main(argv: list[str] | None = None) -> int:
     path = run_baseline(
         args.root,
         CaptionSnapshot(
-            args.snapshot, args.video_id, args.title, args.language, args.duration_seconds
+            args.snapshot,
+            args.video_id,
+            args.title,
+            args.language,
+            args.duration_seconds,
+            args.source_type,
         ),
         ModelIdentity(
             "mock/fixture-replay", "fixture-replay-v1", hashlib.sha256(payload).hexdigest(), True
         ),
         complete,
+        historical_diagnostic=args.historical_diagnostic,
+        source_policy=args.source_policy,
     )
     state = json.loads(path.read_text())["state"]
     print(json.dumps({"record": str(path), "state": state}))
