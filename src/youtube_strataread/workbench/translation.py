@@ -203,6 +203,7 @@ class TranslationPipeline:
         on_console: Callable[[str], None] | None = None,
         *,
         enforce_local_budgets: bool = True,
+        output_tokens: int = 8192,
         quota_exhausted: Callable[[Exception], bool] | None = None,
     ):
         self.complete = complete
@@ -214,6 +215,9 @@ class TranslationPipeline:
         self.on_progress = on_progress
         self.on_console = on_console
         self.enforce_local_budgets = enforce_local_budgets
+        if type(output_tokens) is not int or output_tokens < 1:
+            raise ValueError("Output allocation must be a positive integer")
+        self.output_tokens = output_tokens
         self.quota_exhausted = quota_exhausted
 
     def _log(self, message: str) -> None:
@@ -242,7 +246,7 @@ class TranslationPipeline:
             self._log(f"{key} cache hit; reusing completed response")
             return cached["text"]
         input_bound = token_bound(encode(messages))
-        output_limit = 8192
+        output_limit = self.output_tokens
         for retry in range(3):
             if self.enforce_local_budgets and (
                 self.state["calls"] >= self.config["max_calls"]

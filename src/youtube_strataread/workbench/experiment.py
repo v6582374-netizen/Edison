@@ -29,11 +29,16 @@ from youtube_strataread.workbench.experiment_provider import (
     classify_experiment_model,
 )
 from youtube_strataread.workbench.experiment_source import UNAVAILABLE_REASON, normalize_captions
+from youtube_strataread.workbench.experiment_translation import (
+    CompletionCapacity,
+    DirectTranslationPipeline,
+    OutputSegmentation,
+)
 from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
-    TranslationPipeline,
     UPSTREAM_COMMIT,
+    TranslationPipeline,
     settings,
     token_bound,
     validate_settings,
@@ -209,23 +214,21 @@ def run_baseline(
     quota_contract: QuotaContract | None = None,
     source_policy: str = "conservative-v1",
     variant: str = "A-current-baseline",
-    capacity=None,
-    segmentation=None,
+    capacity: CompletionCapacity | None = None,
+    segmentation: OutputSegmentation | None = None,
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
     if quota_contract and quota_contract.configuration_sha256 != model.configuration_sha256:
         raise ValueError("Quota contract does not match the configured proxy identity")
     if source_policy not in {"conservative-v1", "historical"}:
         raise ValueError("Unknown source normalization policy")
-    from dataclasses import asdict
-    from youtube_strataread.workbench.experiment_translation import CompletionCapacity, DirectTranslationPipeline, OutputSegmentation
 
     if variant not in {"A-current-baseline", "B-direct"}:
         raise ValueError("Unknown experiment variant")
-    if variant != "A-current-baseline":
-        if source_policy != "conservative-v1" or capacity is None:
-            raise ValueError("Direct variants require conservative source and an explicit capacity contract")
-        capacity.validate(simulated_model=model.simulated)
+    if capacity is not None:
+        capacity.validate(simulated_model=model.simulated, configuration_sha256=model.configuration_sha256, model_id=model.id)
+    if variant != "A-current-baseline" and (source_policy != "conservative-v1" or capacity is None):
+        raise ValueError("Direct variants require conservative source and an explicit capacity contract")
     segmentation = segmentation or OutputSegmentation()
     config = validate_settings(config if config is not None else DEFAULTS)
     root = _checked_root(root, snapshot.path)
@@ -326,6 +329,7 @@ def run_baseline(
             pipeline_factory=direct_factory if variant == "B-direct" else TranslationPipeline,
             pipeline_options={
                 "enforce_local_budgets": historical_diagnostic,
+                "output_tokens": capacity.output_tokens if capacity else 8192,
                 "quota_exhausted": quota_contract.recognizes if quota_contract else None,
             },
         ),
@@ -361,7 +365,13 @@ def run_baseline(
         "schema_version": 1,
         "run_id": directory.name,
         "variant": variant,
-        "segmentation": asdict(segmentation),
+        "segmentation": asdict(segmentation) if variant != "A-current-baseline" else {"strategy": "upstream-current"},
+        "comparison_settings": {
+            "country": config["country"], "temperature": 0.3,
+            "requested_output_tokens": capacity.output_tokens if capacity else 8192,
+            "source_policy": source_policy,
+            "consumption_policy": "historical-local-budget" if historical_diagnostic else "no-local-cumulative-budget",
+        },
         "capacity": asdict(capacity) if capacity else None,
         "stage_elapsed_seconds": candidate_pipeline.stage_elapsed_seconds if candidate_pipeline else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -428,7 +438,15 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Private JSON array of response objects, consumed once in order",
     )
+    parser.add_argument("--variant", choices=("A-current-baseline", "B-direct"), default="A-current-baseline")
+    parser.add_argument("--output-strategy", choices=("whole", "semantic-chapters"), default="whole")
+    parser.add_argument("--chapter-end-id", action="append", default=[])
+    parser.add_argument("--chapter-target-characters", type=int, default=12000)
+    parser.add_argument("--capacity-input-characters", type=int)
+    parser.add_argument("--output-tokens", type=int, default=8192)
     args = parser.parse_args(argv)
+    if args.variant != "A-current-baseline" and args.capacity_input_characters is None:
+        parser.error("Direct mock runs require --capacity-input-characters")
     payload = args.mock_responses.read_bytes()
     responses = iter(json.loads(payload))
 
@@ -458,6 +476,9 @@ def main(argv: list[str] | None = None) -> int:
             "mock/fixture-replay", "fixture-replay-v1", hashlib.sha256(payload).hexdigest(), True
         ),
         complete,
+        variant=args.variant,
+        capacity=CompletionCapacity(args.capacity_input_characters, args.output_tokens, simulated=True) if args.capacity_input_characters else None,
+        segmentation=OutputSegmentation(args.output_strategy, tuple(args.chapter_end_id), args.chapter_target_characters),
         historical_diagnostic=args.historical_diagnostic,
         source_policy=args.source_policy,
     )
