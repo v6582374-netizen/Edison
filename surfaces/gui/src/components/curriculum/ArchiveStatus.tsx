@@ -56,7 +56,7 @@ export function ArchiveStatus({ snapshot }: { snapshot: CourseArchiveSnapshot })
           {!!snapshot.backup?.conflicts?.length && <p>{t("course_archive.conflicts", { count: snapshot.backup.conflicts.length })}</p>}
         </section>
         {snapshot.automation?.preparing && <p>{t("course_archive.preparing_count", { count: snapshot.automation.pending ?? 0 })}</p>}
-        {errors.map((message, index) => <p className="course-archive-status-error" key={index}>{message}</p>)}
+        {[...new Set(errors)].map(message => <p className="course-archive-status-error" key={message}>{message}</p>)}
         <p className="course-archive-timezone">{t("course_archive.beijing_time")}</p>
       </div>
     </details>

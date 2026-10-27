@@ -92,7 +92,7 @@ export function CourseArchiveView({ documentId, onOpenDocument, onTimetable }: {
     </> : <>
       {snapshot && <ArchiveStatus snapshot={snapshot} />}
       {snapshot?.backup?.state === "conflict" && <div className="course-archive-attention" role="alert"><Icon name="warning" size={16} /><p>{t("course_archive.backup_detail_conflict")} {t("course_archive.conflicts", { count: snapshot.backup.conflicts?.length ?? 0 })}</p></div>}
-      {!!automationErrors.length && <div className="course-archive-attention" role="alert"><Icon name="warning" size={16} /><div>{automationErrors.map((message, index) => <p key={index}>{message}</p>)}</div></div>}
+      {!!automationErrors.length && <div className="course-archive-attention" role="alert"><Icon name="warning" size={16} /><div>{[...new Set(automationErrors)].map(message => <p key={message}>{message}</p>)}</div></div>}
       <div className="course-archive-workspace">
         <nav className="course-archive-courses" aria-label={t("course_archive.course_navigation")}>
           <p>{t("course_archive.courses_count", { count: snapshot?.courses.length ?? 0 })}</p>
