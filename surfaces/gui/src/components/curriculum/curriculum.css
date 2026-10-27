@@ -2,7 +2,7 @@
 .curriculum-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
 .curriculum-eyebrow { display: flex; gap: 16px; align-items: center; margin: 0 0 8px; color: var(--muted); font-size: var(--fs-label); letter-spacing: .06em; }
 .curriculum-eyebrow span { color: var(--faint); font-variant-numeric: tabular-nums; }
-.curriculum h1 { margin: 0; font-size: var(--fs-title); font-weight: 600; letter-spacing: -.025em; }
+.curriculum h1 { margin: 0; font-size: var(--fs-title); letter-spacing: -.025em; }
 .curriculum-subtitle { margin: 6px 0 0; font-size: var(--fs-ui); color: var(--muted); }
 .curriculum-semester { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: var(--fs-mono); white-space: nowrap; }
 .curriculum-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; }
@@ -23,25 +23,36 @@
 .curriculum-summary { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: var(--fs-label); color: var(--muted); }
 .curriculum-summary > :last-child { color: var(--faint); }
 .curriculum-scroll { flex: 1; min-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--canvas); scrollbar-width: thin; }
-.curriculum-board { min-width: 1000px; }
-.curriculum-day-headings { display: grid; grid-template-columns: 64px repeat(7, minmax(0, 1fr)); position: sticky; top: 0; z-index: 3; background: var(--canvas); border-bottom: 1px solid var(--line); }
-.curriculum-time-heading { color: var(--faint); font-size: var(--fs-label); display: flex; align-items: center; justify-content: center; }
+.curriculum-board { min-width: 1360px; }
+.curriculum-day-headings { display: grid; grid-template-columns: 96px repeat(7, minmax(0, 1fr)); position: sticky; top: 0; z-index: 3; background: var(--canvas); border-bottom: 1px solid var(--line); }
+.curriculum-time-heading { position: sticky; left: 0; z-index: 4; background: var(--canvas); color: var(--faint); font-size: var(--fs-label); display: flex; align-items: center; justify-content: center; }
 .curriculum-day-heading { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 78px; flex-direction: column; gap: 5px; padding: 8px 3px; border-left: 1px solid var(--line); font-size: var(--fs-mono); color: var(--muted); }
 .curriculum-day-heading time { font-size: var(--fs-ui); font-weight: 600; color: var(--ink); }
 .curriculum-day-heading.is-today time { background: var(--accent-soft); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); padding: 5px 8px; border-radius: 7px; }
-.curriculum-grid { display: grid; grid-template-columns: 64px repeat(7, minmax(0, 1fr)); height: 820px; margin-top: 10px; margin-bottom: 12px; }
-.curriculum-axis { position: relative; }
-.curriculum-axis > span { position: absolute; right: 9px; display: flex; align-items: baseline; gap: 5px; transform: translateY(-50%); color: var(--muted); font-size: var(--fs-label); }
-.curriculum-axis b { font-weight: 400; font-variant-numeric: tabular-nums; }
-.curriculum-axis small { font-size: var(--fs-label); color: var(--faint); width: 10px; text-align: right; }
+/* Two pixels per minute keeps even five-minute breaks visible on the real-time axis. */
+.curriculum-grid { display: grid; grid-template-columns: 96px repeat(7, minmax(0, 1fr)); height: 1560px; margin-top: 10px; margin-bottom: 12px; }
+.curriculum-axis { position: sticky; left: 0; z-index: 2; background: var(--canvas); }
+.curriculum-axis-period { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding: 3px 10px 3px 4px; color: var(--muted); font-size: var(--fs-label); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.curriculum-axis-period > span { display: flex; align-items: baseline; gap: 5px; }
+.curriculum-axis-period time { font-variant-numeric: tabular-nums; }
+.curriculum-axis-period b { font-weight: 500; color: var(--ink); }
+.curriculum-axis-period small { font-size: 10px; }
 .curriculum-day { position: relative; border-left: 1px solid var(--line); min-width: 0; }
 .curriculum-day.is-today { background: color-mix(in srgb, var(--accent) 2.5%, transparent); }
-.curriculum-period-line { position: absolute; width: 100%; border-top: 1px solid var(--line); pointer-events: none; }
-.curriculum-course { position: absolute; left: calc(5px + (100% - 6px) * var(--lane, 0) / var(--lanes, 1)); width: calc((100% - 6px) / var(--lanes, 1) - 4px); display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--course-color) 24%, var(--line)); border-left: 3px solid var(--course-color); border-radius: 6px; background: color-mix(in srgb, var(--course-color) 12%, var(--canvas)); color: var(--ink); text-align: left; overflow: hidden; }
+.curriculum-period-shading { position: absolute; width: 100%; border-block: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 1.5%, transparent); pointer-events: none; }
+.curriculum-course { position: absolute; left: calc(5px + (100% - 6px) * var(--lane, 0) / var(--lanes, 1)); width: calc((100% - 6px) / var(--lanes, 1) - 4px); display: block; padding: 0; border: 1px solid color-mix(in srgb, var(--course-color) 24%, var(--line)); border-left: 3px solid var(--course-color); border-radius: 6px; background: color-mix(in srgb, var(--course-color) 12%, var(--canvas)); color: var(--ink); text-align: left; overflow: hidden; }
 .curriculum-course:hover { background: color-mix(in srgb, var(--course-color) 20%, var(--canvas)); }
-.curriculum-course-time { font-size: var(--fs-label); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.curriculum-course strong { font-size: var(--fs-ui); line-height: 1.4; font-weight: 500; overflow-wrap: anywhere; }
-.curriculum-course-room { font-size: var(--fs-label); color: var(--muted); margin-top: auto; }
+.curriculum-course-time { max-width: 100%; font-size: 10px; letter-spacing: -.03em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.curriculum-course strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: var(--fs-ui); line-height: 1.3; font-weight: 500; overflow-wrap: anywhere; }
+.curriculum-course-period { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px; overflow: hidden; }
+.curriculum-course-resume { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: var(--fs-label); }
+.curriculum-course-resume time { font-size: 10px; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.curriculum-course-break { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; background: var(--canvas); color: var(--muted); border-block: 1px dashed color-mix(in srgb, var(--course-color) 35%, var(--line)); font-size: 9px; line-height: 1; }
+.curriculum-course-room { max-width: 100%; overflow-wrap: anywhere; font-size: var(--fs-label); color: var(--muted); margin-top: auto; }
+.curriculum-details-periods { list-style: none; margin: 14px 0 0; padding: 0; font-size: var(--fs-label); font-weight: 400; }
+.curriculum-details-periods li > span { display: flex; justify-content: space-between; gap: 12px; }
+.curriculum-details-periods time { font-variant-numeric: tabular-nums; }
+.curriculum-details-periods li > small { margin: 8px 0; padding: 6px 0; border-block: 1px dashed var(--line); font-size: var(--fs-label); }
 .curriculum-free { position: absolute; top: 42px; left: 0; right: 0; text-align: center; font-size: var(--fs-mono); color: var(--faint); }
 .curriculum-footer { padding-top: 12px; font-size: var(--fs-label); color: var(--faint); }
 @media (max-width: 900px) { .curriculum { padding: 24px 18px 12px; } .curriculum-header { margin-bottom: 20px; } }
@@ -53,7 +64,7 @@
 .curriculum-notes { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 12px; font-size: var(--fs-mono); color: var(--muted); }
 .curriculum-notes > span { display: inline-flex; align-items: center; gap: 5px; }
 
-.curriculum-empty { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); padding: 40px; text-align: center; }
+.curriculum-empty { position: sticky; left: 0; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); padding: 40px; text-align: center; }
 .curriculum-empty h3 { color: var(--ink); font-size: var(--fs-heading); font-weight: 500; margin: 0; }
 .curriculum-empty p { font-size: var(--fs-ui); margin: 0; }
 
