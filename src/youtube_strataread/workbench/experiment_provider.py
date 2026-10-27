@@ -69,7 +69,7 @@ def probe_provider(
     from dataclasses import asdict
     from pathlib import Path
 
-    from youtube_strataread.workbench.experiment import _checked_root, _write_json
+    from youtube_strataread.workbench.experiment import _checked_root, _repository, _write_json
 
     if not 128 <= input_characters <= 100000 or not 16 <= output_tokens <= 4096:
         raise ValueError("Probe sizes must stay within the explicit bounded envelope")
@@ -100,6 +100,7 @@ def probe_provider(
     }
     record = {
         "schema_version": 1,
+        "repository": _repository(),
         "model": asdict(model),
         "state": "unverified",
         "blocker": blocker,
@@ -208,9 +209,16 @@ def probe_provider(
             "Transport observations required; adapter arguments are not wire evidence",
         )
         short, larger = observed[1:]
-        effective = short.get("finish_reason") in {"length", "max_tokens"} and larger.get(
-            "response_characters", 0
-        ) > short.get("response_characters", 0)
+        short_output = (short.get("usage") or {}).get("output")
+        larger_output = (larger.get("usage") or {}).get("output")
+        effective = (
+            short.get("finish_reason") in {"length", "max_tokens"}
+            and isinstance(short_output, int)
+            and 0 < short_output <= 8
+            and isinstance(larger_output, int)
+            and short_output < larger_output <= output_tokens
+            and larger.get("response_characters", 0) > short.get("response_characters", 0)
+        )
         observed_capability(
             "output_budget_effective",
             forwarded and effective,

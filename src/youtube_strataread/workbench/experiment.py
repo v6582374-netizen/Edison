@@ -20,12 +20,15 @@ from platformdirs import user_data_dir
 
 from coworker.secrets import state_dir
 from coworker.server.youtube import HostManuscripts
+from youtube_strataread.downloader import cues_to_lines, load_cues
+from youtube_strataread.downloader.request_policy import YouTubeError
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench.discovery import Candidate
 from youtube_strataread.workbench.experiment_provider import (
     QuotaContract,
     classify_experiment_model,
 )
+from youtube_strataread.workbench.experiment_source import UNAVAILABLE_REASON, normalize_captions
 from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
@@ -47,6 +50,8 @@ class CaptionSnapshot:
     title: str
     language: str
     duration_seconds: float | None = None
+    source_type: str = "speech"
+    verified_rolling_pairs: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -201,10 +206,13 @@ def run_baseline(
     config: dict[str, Any] | None = None,
     historical_diagnostic: bool = False,
     quota_contract: QuotaContract | None = None,
+    source_policy: str = "conservative-v1",
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
     if quota_contract and quota_contract.configuration_sha256 != model.configuration_sha256:
         raise ValueError("Quota contract does not match the configured proxy identity")
+    if source_policy not in {"conservative-v1", "historical"}:
+        raise ValueError("Unknown source normalization policy")
     config = validate_settings(config if config is not None else DEFAULTS)
     root = _checked_root(root, snapshot.path)
     repository = _repository()
@@ -217,6 +225,8 @@ def run_baseline(
         "language": snapshot.language,
         "duration_seconds": snapshot.duration_seconds,
         "bytes": len(source),
+        "source_type": snapshot.source_type,
+        "verified_rolling_pairs": [list(pair) for pair in snapshot.verified_rolling_pairs],
     }
     marker = {
         "format": "edison-translation-experiment",
@@ -268,6 +278,24 @@ def run_baseline(
         ),
     )
     manager = SimpleNamespace(model=model.id, provider_complete=recorder)
+    normalized = None
+
+    def normalize(text: str, language: str) -> str:
+        nonlocal normalized
+        if snapshot.source_type != "speech" or language == "live_chat" or not text.strip():
+            raise YouTubeError(UNAVAILABLE_REASON)
+        if source_policy == "historical":
+            cleaned = "\n".join(cues_to_lines(load_cues(text))).strip()
+            if not cleaned:
+                raise YouTubeError(UNAVAILABLE_REASON)
+            return cleaned
+        normalized = normalize_captions(
+            text,
+            source_type=snapshot.source_type,
+            verified_rolling_pairs=snapshot.verified_rolling_pairs,
+        )
+        return normalized.text
+
     preparation = PreparationService(
         workspace,
         _SnapshotCaptions(snapshot, text),
@@ -281,11 +309,16 @@ def run_baseline(
         ),
         shorts=_SnapshotVideo(),
         model_failure_classifier=classify_experiment_model,
+        transcript_normalizer=normalize,
     )
     started = time.monotonic()
     preparation.run_next()
     asset = workspace.asset(snapshot.video_id)
     artifacts = {"raw_captions": "source.srt"}
+    if normalized is not None:
+        _write_json(directory / "normalized-source.json", normalized.record())
+        (directory / "normalized-source.json").chmod(0o400)
+        artifacts["normalized_source"] = "normalized-source.json"
     if asset["preparation_state"] == "ready":
         document = workspace.document(snapshot.video_id)
         for name, path in [
@@ -312,6 +345,10 @@ def run_baseline(
         },
         "model": asdict(model),
         "source": source_identity,
+        "source_processing": {
+            "policy": source_policy,
+            "normalized_sha256": normalized.record()["sha256"] if normalized else None,
+        },
         "settings": config,
         "state": asset["preparation_state"],
         "reason": asset["failure_reason"],
@@ -346,6 +383,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--video-id", required=True)
     parser.add_argument("--title", default="Private experiment snapshot")
     parser.add_argument("--language", required=True)
+    parser.add_argument(
+        "--source-type", choices=["speech", "live_chat", "absent"], default="speech"
+    )
+    parser.add_argument(
+        "--source-policy", choices=["conservative-v1", "historical"], default="conservative-v1"
+    )
     parser.add_argument("--duration-seconds", type=float)
     parser.add_argument(
         "--historical-diagnostic",
@@ -377,13 +420,19 @@ def main(argv: list[str] | None = None) -> int:
     path = run_baseline(
         args.root,
         CaptionSnapshot(
-            args.snapshot, args.video_id, args.title, args.language, args.duration_seconds
+            args.snapshot,
+            args.video_id,
+            args.title,
+            args.language,
+            args.duration_seconds,
+            args.source_type,
         ),
         ModelIdentity(
             "mock/fixture-replay", "fixture-replay-v1", hashlib.sha256(payload).hexdigest(), True
         ),
         complete,
         historical_diagnostic=args.historical_diagnostic,
+        source_policy=args.source_policy,
     )
     state = json.loads(path.read_text())["state"]
     print(json.dumps({"record": str(path), "state": state}))
