@@ -77,10 +77,15 @@ def _summary_text(turn: Any) -> str:
 
 
 class HostManuscripts:
-    def __init__(self, manager: Any, workspace: LocalWorkspace | None = None, *, pipeline_factory: Any = TranslationPipeline) -> None:
+    def __init__(
+        self, manager: Any, workspace: LocalWorkspace | None = None,
+        *, pipeline_options: dict[str, Any] | None = None,
+        pipeline_factory: Any = TranslationPipeline,
+    ) -> None:
         self.manager = manager
         self.workspace = workspace
         self.pipeline_factory = pipeline_factory
+        self.pipeline_options = pipeline_options or {}
 
     @property
     def account(self) -> str:
@@ -110,6 +115,7 @@ class HostManuscripts:
             if self.workspace and video_id else None,
             on_console=(lambda message: self.workspace.report_console(video_id, message))
             if self.workspace and video_id else None,
+            **self.pipeline_options,
         ).run(transcript, source_lang=source_language)
 
 

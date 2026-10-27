@@ -74,6 +74,11 @@ class TranslationError(RuntimeError):
     pass
 
 
+class ConfirmedCreditExhausted(TranslationError):
+    def __init__(self):
+        super().__init__("已确认上游额度耗尽，本次未完成中间产物已舍弃；原始字幕与历史稿件保留。")
+
+
 class BudgetExceeded(TranslationError):
     def __init__(self):
         super().__init__("超出处理预算，本次未完成结果已舍弃；原始字幕与历史稿件保留。")
@@ -196,6 +201,9 @@ class TranslationPipeline:
         checkpoint: Path | None = None,
         on_progress: Callable[[str, str], None] | None = None,
         on_console: Callable[[str], None] | None = None,
+        *,
+        enforce_local_budgets: bool = True,
+        quota_exhausted: Callable[[Exception], bool] | None = None,
     ):
         self.complete = complete
         self.model = model
@@ -205,6 +213,8 @@ class TranslationPipeline:
         self.cursor = 0
         self.on_progress = on_progress
         self.on_console = on_console
+        self.enforce_local_budgets = enforce_local_budgets
+        self.quota_exhausted = quota_exhausted
 
     def _log(self, message: str) -> None:
         if self.on_console:
@@ -234,7 +244,7 @@ class TranslationPipeline:
         input_bound = token_bound(encode(messages))
         output_limit = 8192
         for retry in range(3):
-            if (
+            if self.enforce_local_budgets and (
                 self.state["calls"] >= self.config["max_calls"]
                 or self.state["tokens"] + input_bound + output_limit > self.config["max_tokens"]
             ):
@@ -249,6 +259,9 @@ class TranslationPipeline:
                     self.model, messages, tools=None, max_tokens=output_limit, **options
                 )
             except Exception as error:
+                if self.quota_exhausted and self.quota_exhausted(error):
+                    self._discard()
+                    raise ConfirmedCreditExhausted() from error
                 transient = (
                     isinstance(error, (TimeoutError, ConnectionError))
                     # 429 is an account limit: leave the job so the shared gate pauses the account.
@@ -282,7 +295,7 @@ class TranslationPipeline:
                 actual = input_bound + max(output_limit, token_bound(str(turn.text or "")))
             self.state["tokens"] += actual - input_bound - output_limit
             self._save()
-            if self.state["tokens"] > self.config["max_tokens"]:
+            if self.enforce_local_budgets and self.state["tokens"] > self.config["max_tokens"]:
                 raise BudgetExceeded()
             if (
                 not turn.text
@@ -435,5 +448,6 @@ class TranslationPipeline:
                 "budget_tokens": self.state["tokens"],
                 "source_sha256": self.state["source"],
                 "translation_skipped": skipped,
+                "consumption_policy": "historical-local-budget" if self.enforce_local_budgets else "no-local-cumulative-budget",
             },
         )

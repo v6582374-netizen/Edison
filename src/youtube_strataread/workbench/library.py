@@ -91,6 +91,7 @@ class PreparationService:
     captions: CaptionAcquirer
     manuscripts: ManuscriptGenerator
     shorts: ShortsClassifier = field(default_factory=YouTubeShortsClassifier)
+    model_failure_classifier: Callable[[Exception, float], Failure] = classify_model
     transcript_normalizer: Callable[[str, str], str] | None = None
     _claim_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _stopping: bool = field(default=False, init=False, repr=False)
@@ -254,7 +255,7 @@ class PreparationService:
             self.workspace.set_preparation_state(video_id, "ready")
             self.workspace.model_account_succeeded(account)
         except Exception as error:
-            failure = classify_model(error, self.workspace.now())
+            failure = self.model_failure_classifier(error, self.workspace.now())
             if failure.kind == "account":
                 failure = self.workspace.limit_model_account(account, failure)
                 self.workspace.defer_retry(video_id, failure, charge=False)
