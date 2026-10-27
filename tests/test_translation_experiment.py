@@ -232,7 +232,7 @@ def test_local_budget_is_retained_and_request_failures_remain_private(tmp_path):
     config = copy.deepcopy(DEFAULTS)
     config["max_calls"] = 1
     record_path = run_baseline(
-        tmp_path / "experiment", source, identity(), EchoModel(), config=config
+        tmp_path / "experiment", source, identity(), EchoModel(), config=config, historical_diagnostic=True
     )
     record = json.loads(record_path.read_text())
     assert record["state"] == "failed"

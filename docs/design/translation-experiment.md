@@ -64,6 +64,6 @@ The request files retain rendered messages/options, finish reason, response, ava
 
 ## Known limits of this baseline
 
-This ticket intentionally retains current source cleanup, segmentation and local cumulative call/token budgets. It therefore establishes the historical mechanism diagnostic only. [取消实验中的本地消费上限，验证真实代理行为](https://github.com/v6582374-netizen/Edison/issues/71) must apply the shared no-budget policy before a fair main comparison. The record explicitly sets `fair_long_comparison: false`.
+Main experimental execution now disables local cumulative call/token budgets, independently of legacy settings and restored checkpoint counters. The optional `historical_diagnostic=True` API argument or `--historical-diagnostic` CLI flag retains those historical budgets for a separately labeled diagnostic. Records disclose `consumption_policy` and still set `fair_long_comparison: false` until matching source, provider, candidate and long-sample evidence exists. See [the provider experiment contract](experiment-provider.md). Production settings and default production budget behavior remain unchanged.
 
 The synthetic smoke and deterministic tests demonstrate storage, isolation and artifact flow. They do not establish translation quality, a real proxy contract, two-/four-hour completion, candidate superiority or a production replacement recommendation. Those require the remaining source-handling, candidate, recovery and evaluation tickets. No live model calls, production rollout or historical production reprocessing follow from this entry.
