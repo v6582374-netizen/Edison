@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon } from "../Icon";
-import type { Occurrence } from "./timetable";
+import { minutes, PERIODS, type Occurrence } from "./timetable";
 import { getOccurrenceDocuments } from "../../api";
 import type { RecordedClass } from "../../api";
 import "./archive.css";
@@ -60,7 +60,14 @@ export function CourseDetails({ course, onClose, onOpenDocument }: { course: Occ
       <h2 id="curriculum-course-title">{course.name}</h2>
       <p className="curriculum-details-date">{date}</p>
       <dl>
-        <dt>{t("curriculum.class_time")}</dt><dd>{course.start}–{course.end}<small>{t("curriculum.period_range", { first: course.first, last: course.last })}</small></dd>
+        <dt>{t("curriculum.class_time")}</dt><dd>{course.start}–{course.end}<small>{t("curriculum.period_range", { first: course.first, last: course.last })}</small>
+          <ol className="curriculum-details-periods" aria-label={t("curriculum.period_times")}>
+            {PERIODS.slice(course.first - 1, course.last).map(([start, end], index) => <li key={start}>
+              <span>{t("curriculum.period", { number: course.first + index })}<time>{start}–{end}</time></span>
+              {course.first + index < course.last && <small>{t("curriculum.break_minutes", { count: minutes(PERIODS[course.first + index][0]) - minutes(end) })} · {end}–{PERIODS[course.first + index][0]}</small>}
+            </li>)}
+          </ol>
+        </dd>
         <dt>{t("curriculum.classroom")}</dt><dd>{course.room}</dd>
         <dt>{t("curriculum.teacher")}</dt><dd>{course.teacher}</dd>
         <dt>{t("curriculum.assessment")}</dt>

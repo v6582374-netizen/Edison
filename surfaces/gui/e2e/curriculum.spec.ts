@@ -101,6 +101,9 @@ test("course details expose the correct teacher and class periods, then restore 
   await expect(dialog).toContainText("张懿");
   await expect(dialog).toContainText("第 8–9 节");
   await expect(dialog).toContainText("15:20–16:55");
+  await expect(dialog.getByRole("list", { name: "逐节上下课时间" })).toContainText("第 8 节15:20–16:05");
+  await expect(dialog.getByRole("list", { name: "逐节上下课时间" })).toContainText("课间 5 分钟 · 16:05–16:10");
+  await expect(dialog.getByRole("list", { name: "逐节上下课时间" })).toContainText("第 9 节16:10–16:55");
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(course).toBeFocused();
@@ -110,6 +113,31 @@ test("course details expose the correct teacher and class periods, then restore 
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await view.getByRole("region", { name: "2026-09-17" }).getByRole("button", { name: /可持续旅游与数字创新/ }).click();
   await expect(page.getByRole("dialog")).toContainText("全程外教英文授课");
+});
+
+test("shows individual start and end times and a real break inside one continuous course", async ({ page }) => {
+  await page.getByRole("button", { name: "Curriculum", exact: true }).click();
+  const view = page.getByRole("main", { name: "Curriculum" });
+  await expect(view.getByRole("heading", { name: "Curriculum", exact: true })).toHaveCSS("font-style", "italic");
+  const axis = view.getByLabel("逐节上下课时间", { exact: true });
+  await expect(axis).toContainText("上课08:00第 1 节下课08:45");
+  await expect(axis).toContainText("上课08:50第 2 节下课09:35");
+  await expect(axis).toContainText("上课20:10第 12 节下课20:55");
+  const course = view.getByRole("region", { name: "2026-09-14" }).getByRole("button", { name: /物联网技术与原理.*08:00–09:35/ });
+  await expect(course).toHaveCount(1);
+  await expect(course.getByLabel("08:45–08:50 · 课间 5 分钟")).toContainText("课间");
+  await expect(course).toContainText("第 2 节08:50–09:35");
+  const firstEnd = await axis.locator("time").nth(1).boundingBox();
+  const secondStart = await axis.locator("time").nth(2).boundingBox();
+  expect(firstEnd!.y + firstEnd!.height).toBeLessThan(secondStart!.y);
+  const evening = view.getByRole("region", { name: "2026-09-17" }).getByRole("button", { name: /可持续旅游与数字创新/ });
+  await expect(evening.getByLabel("19:15–19:20 · 课间 5 分钟")).toHaveCount(1);
+  await expect(evening.getByLabel("20:05–20:10 · 课间 5 分钟")).toHaveCount(1);
+  await expect(evening).toContainText("第 12 节20:10–20:55");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scroller = view.getByRole("region", { name: "每周课表" });
+  await scroller.evaluate(element => element.scrollLeft = element.scrollWidth);
+  await expect(axis.locator("time").first()).toBeInViewport();
 });
 
 test("course details show the assessment method and keep personal additions across occurrences and reloads", async ({ page }) => {
@@ -172,6 +200,7 @@ test.describe("school timezone", () => {
     await expect(page.getByRole("heading", { name: "Week 2", exact: true })).toBeVisible();
     await expect(page.getByLabel("Jump to date")).toHaveValue("2026-09-21");
     await expect(page.getByRole("button", { name: "Next week", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Class period times", { exact: true })).toContainText("Start08:00Period 1End08:45");
     await page.getByLabel("Jump to date").fill("2027-01-01");
     await expect(page.getByRole("heading", { name: "Week 16", exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "2027-01-01" }).getByRole("button")).toHaveCount(0);

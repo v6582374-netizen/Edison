@@ -43,7 +43,7 @@ export function CurriculumView({ onOpenDocument }: { onOpenDocument?: (id: strin
       <header className="curriculum-header">
         <div>
           <p className="curriculum-eyebrow">{t("curriculum.university")} <span>2026 — 2027</span></p>
-          <h1>Curriculum</h1>
+          <h1 className="editorial-heading">Curriculum</h1>
           <p className="curriculum-subtitle">{t("curriculum.subtitle")}</p>
         </div>
         <div className="curriculum-header-actions">
@@ -88,16 +88,35 @@ export function CurriculumView({ onOpenDocument }: { onOpenDocument?: (id: strin
             </div>)}
           </div>
           {hasTimetable && <div className="curriculum-grid">
-            <div className="curriculum-axis" aria-hidden="true">
-              {PERIODS.map(([start], i) => <span key={start} style={{ top: position(start) }}><b>{start}</b><small>{i + 1}</small></span>)}
+            <div className="curriculum-axis" aria-label={t("curriculum.period_times")}>
+              {PERIODS.map(([start, end], i) => <div key={start} className="curriculum-axis-period" style={{ top: position(start), height: `${(minutes(end) - minutes(start)) / (GRID_END - GRID_START) * 100}%` }}>
+                <span><small>{t("curriculum.starts")}</small><time>{start}</time></span>
+                <b>{t("curriculum.period", { number: i + 1 })}</b>
+                <span><small>{t("curriculum.ends")}</small><time>{end}</time></span>
+              </div>)}
             </div>
             {schedule.days.map(day => <section key={day.date} className={`curriculum-day ${day.date === today ? "is-today" : ""}`} aria-label={day.date}>
-              {PERIODS.map(([start]) => <div key={start} className="curriculum-period-line" style={{ top: position(start) }} />)}
-              {day.courses.map(course => <button key={course.id} className="curriculum-course" onClick={() => setSelectedCourse(course)} style={{ top: position(course.start), height: `${(minutes(course.end) - minutes(course.start)) / (GRID_END - GRID_START) * 100}%`, "--course-color": course.color, "--lane": course.lane, "--lanes": course.lanes } as CSSProperties}>
-                <span className="curriculum-course-time">{course.start}–{course.end}</span>
-                <strong>{course.name}</strong>
-                <span className="curriculum-course-room">{course.room}</span>
-              </button>)}
+              {PERIODS.map(([start, end]) => <div key={start} className="curriculum-period-shading" style={{ top: position(start), height: `${(minutes(end) - minutes(start)) / (GRID_END - GRID_START) * 100}%` }} aria-hidden="true" />)}
+              {day.courses.map(course => {
+                const duration = minutes(course.end) - minutes(course.start);
+                const withinCourse = (time: string) => `${(minutes(time) - minutes(course.start)) / duration * 100}%`;
+                return <button key={course.id} className="curriculum-course" onClick={() => setSelectedCourse(course)} aria-label={`${course.name} ${course.start}–${course.end} ${course.room}`} title={course.name} style={{ top: position(course.start), height: `${duration / (GRID_END - GRID_START) * 100}%`, "--course-color": course.color, "--lane": course.lane, "--lanes": course.lanes } as CSSProperties}>
+                  {PERIODS.slice(course.first - 1, course.last).map(([start, end], index) => <span key={start} className="curriculum-course-period" style={{ top: withinCourse(start), height: `${(minutes(end) - minutes(start)) / duration * 100}%` }}>
+                    {index === 0 ? <>
+                      <span className="curriculum-course-time">{course.start}–<wbr />{course.end}</span>
+                      <strong>{course.name}</strong>
+                    </> : <span className="curriculum-course-resume">{t("curriculum.period", { number: course.first + index })}<time>{start}–<wbr />{end}</time></span>}
+                    {course.first + index === course.last && <span className="curriculum-course-room">{course.room}</span>}
+                  </span>)}
+                  {PERIODS.slice(course.first - 1, course.last - 1).map(([, end], index) => {
+                    const nextStart = PERIODS[course.first + index][0];
+                    const count = minutes(nextStart) - minutes(end);
+                    return <span key={end} className="curriculum-course-break" style={{ top: withinCourse(end), height: `${count / duration * 100}%` }} aria-label={`${end}–${nextStart} · ${t("curriculum.break_minutes", { count })}`}>
+                      {t("curriculum.break")}
+                    </span>;
+                  })}
+                </button>;
+              })}
               {!day.courses.length && day.covered && <span className="curriculum-free">{t("curriculum.no_courses")}</span>}
               {!day.covered && <span className="curriculum-free">{t("curriculum.no_timetable")}</span>}
             </section>)}
