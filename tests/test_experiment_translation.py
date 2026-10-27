@@ -388,3 +388,48 @@ def test_failed_direct_regeneration_preserves_successful_translation_and_version
     assert ws.document("sample") == first
     assert Path(first["translation_path"]).read_text() == "需要25个单位，不得改变顺序。\n"
     assert json.loads(first_record.read_text())["state"] == "ready"
+
+
+def test_exact_json_fence_retains_both_direct_artifacts_and_completed_resume(tmp_path):
+    translated = "Ada：需要25个单位（不是30个）。Ben：不得改变步骤顺序。"
+    payload = {"units": [{"source_ids": ["cue-000001", "cue-000002"], "text": translated}]}
+    snapshot = source(tmp_path)
+    calls = []
+
+    def fenced(*args, **kwargs):
+        calls.append(1)
+        return AssistantTurn(
+            text="```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```",
+            finish_reason="stop",
+        )
+
+    first = run_baseline(
+        tmp_path / "run",
+        snapshot,
+        IDENTITY,
+        fenced,
+        variant="B-direct",
+        capacity=CAPACITY,
+        attempt_id="fenced",
+    )
+    record = json.loads(first.read_text())
+    assert record["state"] == "ready"
+    assert (first.parent / "translation.md").read_text() == translated + "\n"
+    assert (first.parent / "manuscript.md").read_text() == "## 第 1 节\n\n" + translated + "\n"
+    repeated = run_baseline(
+        tmp_path / "run",
+        snapshot,
+        IDENTITY,
+        fenced,
+        variant="B-direct",
+        capacity=CAPACITY,
+        attempt_id="fenced",
+        mode="resume",
+    )
+    assert json.loads(repeated.read_text())["attempts"] == 0
+    assert len(calls) == 1
+    provenance = json.loads(
+        (first.parent / record["artifacts"]["candidate_provenance"]).read_text()
+    )
+    assert provenance["response_contract"] == "json-or-single-json-codeblock-v1"
+    assert len(LocalWorkspace.open(tmp_path / "run/workspace").generation_records("sample")) == 1

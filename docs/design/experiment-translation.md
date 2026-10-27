@@ -51,3 +51,7 @@ Private candidate provenance contains rendered mechanism prompt, source coverage
 ## Offline CLI
 
 The existing mock CLI accepts `--variant B-direct --capacity-input-characters SIZE --output-tokens TOKENS`, plus `--output-strategy whole|semantic-chapters`, repeatable `--chapter-end-id` and `--chapter-target-characters`. The mock response fixture text must contain the JSON response shape above. Real callbacks use the Python API with matching verified capability evidence; the CLI remains offline and cannot look up credentials or start production scheduling.
+
+## Provider JSON envelope
+
+The `json-or-single-json-codeblock-v1` response contract accepts a JSON value directly or a single exact whole-response code-block envelope labeled `json` (opening and closing fences on their own lines). It removes only that envelope and parses the complete inner value as JSON. Surrounding prose, multiple blocks, other language labels, unterminated fences and trailing inner data remain invalid. Schema, selected-source coverage/order, finish metadata and capacity checks still apply; this compatibility does not salvage partial output. The same decoder applies to C draft and review response objects, including cached response replay. The parser contract is included in candidate identity, experiment attempt identity and candidate provenance.

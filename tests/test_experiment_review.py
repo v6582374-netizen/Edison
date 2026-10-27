@@ -512,3 +512,47 @@ def test_structural_accept_and_unresolved_replacements_never_publish(tmp_path, d
     workspace = LocalWorkspace.open(tmp_path / "run/workspace")
     assert workspace.generation_records("sample") == []
     assert workspace.retained_transcript("sample")["content"] == snapshot.path.read_text()
+
+
+@pytest.mark.parametrize(
+    "decision,original,draft_text,final_text",
+    [
+        ("replace", "Age is 25 years.", "年龄是26岁。", "年龄是25岁。"),
+        ("accept", "It costs 25 dollars.", "价格是25美金。", "价格是25美金。"),
+    ],
+)
+def test_fenced_conditional_decision_resumes_after_interruption(
+    tmp_path, decision, original, draft_text, final_text
+):
+    class ProcessLoss(BaseException):
+        pass
+
+    snapshot = source(tmp_path, (original,))
+    calls = 0
+
+    def interrupted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise ProcessLoss()
+        payload = {"units": [row(["cue-000001"], draft_text)]}
+        return AssistantTurn(text="```json\n" + json.dumps(payload) + "\n```", finish_reason="stop")
+
+    with pytest.raises(ProcessLoss):
+        run(tmp_path, interrupted, snapshot, attempt_id="fenced-review")
+    payload = {"decision": decision, "units": [row(["cue-000001"], final_text)]}
+    resumed_model = ScriptedModel(
+        [AssistantTurn(text="```json\n" + json.dumps(payload) + "\n```", finish_reason="stop")]
+    )
+    result = run(tmp_path, resumed_model, snapshot, attempt_id="fenced-review", mode="resume")
+    record = json.loads(result.read_text())
+    assert record["state"] == "ready"
+    assert record["attempts"] == 1
+    assert (result.parent / "translation.md").read_text() == final_text + "\n"
+    assert (result.parent / "manuscript.md").read_text() == "## 第 1 节\n\n" + final_text + "\n"
+    events = json.loads((result.parent / record["artifacts"]["conditional_review"]).read_text())
+    assert events[-1]["decision"] == decision
+    assert "source_coverage" not in events[0]["triggers"]
+    repeated = run(tmp_path, ScriptedModel([]), snapshot, attempt_id="fenced-review", mode="resume")
+    assert json.loads(repeated.read_text())["attempts"] == 0
+    assert len(LocalWorkspace.open(tmp_path / "run/workspace").generation_records("sample")) == 1

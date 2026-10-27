@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 from typing import Any
 
+from youtube_strataread.workbench.experiment_json import decode_response_json
 from youtube_strataread.workbench.experiment_translation import DirectTranslationPipeline
 from youtube_strataread.workbench.translation import TranslationError
 
@@ -146,7 +147,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
     def _safe_rows(text, expected):
         """Only nonconflicting, contiguous source ranges can survive a bad draft."""
         try:
-            value = json.loads(text)
+            value = decode_response_json(text)
         except (ValueError, TypeError):
             return []
         if (
@@ -197,7 +198,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
         source_order_changed = False
         source_structure_invalid = False
         if rows and len(retained) == len(chapter.source_ids):
-            original_rows = json.loads(draft)["units"]
+            original_rows = decode_response_json(draft)["units"]
             source_structure_invalid = len(rows) != len(original_rows)
             if not source_structure_invalid:
                 original_ids = [id for row in original_rows for id in row["source_ids"]]
@@ -274,7 +275,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
                 response = self._request(
                     f"conditional:repair:{chapter.id}:{attempt}", repair_messages, temperature=0.3
                 )
-                value = json.loads(response)
+                value = decode_response_json(response)
                 if (
                     not isinstance(value, dict)
                     or set(value) != {"decision", "units"}

@@ -26,6 +26,7 @@ from youtube_strataread.downloader.request_policy import YouTubeError
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench.discovery import Candidate
 from youtube_strataread.workbench.experiment_baseline import ComparableBaselinePipeline
+from youtube_strataread.workbench.experiment_json import RESPONSE_JSON_CONTRACT
 from youtube_strataread.workbench.experiment_provider import (
     QuotaContract,
     classify_experiment_model,
@@ -295,6 +296,7 @@ def _run_baseline(
             chapter_plan = effective_chapter_plan(output_chapters(normalized_identity.units, segmentation))
     attempt_identity = {
         "contract": "strict-finish-and-atomic-publication-v1",
+        "json_response_contract": RESPONSE_JSON_CONTRACT if variant != "A-current-baseline" else None,
         "source": source_identity,
         "normalized": normalized_identity.record() if normalized_identity else None,
         "source_policy": source_policy, "model": asdict(model), "settings": config,

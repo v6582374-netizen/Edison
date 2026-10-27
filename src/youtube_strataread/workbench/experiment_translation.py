@@ -13,6 +13,10 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from youtube_strataread.workbench.experiment_json import (
+    RESPONSE_JSON_CONTRACT,
+    decode_response_json,
+)
 from youtube_strataread.workbench.experiment_source import SourceUnit
 from youtube_strataread.workbench.translation import (
     TranslationError,
@@ -173,6 +177,7 @@ class DirectTranslationPipeline(TranslationPipeline):
         self.complete = observed_complete
         self.identity = {
             "variant": "B-direct",
+            "response_contract": RESPONSE_JSON_CONTRACT,
             "model": self.model,
             "settings": self.config,
             "source_units": [asdict(unit) for unit in source_units],
@@ -245,7 +250,7 @@ class DirectTranslationPipeline(TranslationPipeline):
     @staticmethod
     def _parse_units(text: str, expected: list[str]) -> list[dict[str, Any]]:
         try:
-            value = json.loads(text)
+            value = decode_response_json(text)
         except (ValueError, TypeError) as error:
             raise TranslationError("译文缺少可验证的来源单元结构，未发布稿件。") from error
         if (
@@ -300,6 +305,7 @@ class DirectTranslationPipeline(TranslationPipeline):
             translation=translation,
             provenance={
                 "variant": "B-direct",
+                "response_contract": RESPONSE_JSON_CONTRACT,
                 "model": self.model,
                 "prompt": DIRECT_PROMPT,
                 "settings": self.config,
