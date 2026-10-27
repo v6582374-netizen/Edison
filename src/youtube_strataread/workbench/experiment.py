@@ -28,6 +28,7 @@ from youtube_strataread.workbench.experiment_provider import (
     QuotaContract,
     classify_experiment_model,
 )
+from youtube_strataread.workbench.experiment_review import ConditionalReviewPipeline, ReviewPolicy
 from youtube_strataread.workbench.experiment_source import UNAVAILABLE_REASON, normalize_captions
 from youtube_strataread.workbench.experiment_translation import (
     CompletionCapacity,
@@ -216,6 +217,7 @@ def run_baseline(
     variant: str = "A-current-baseline",
     capacity: CompletionCapacity | None = None,
     segmentation: OutputSegmentation | None = None,
+    review_policy: ReviewPolicy | None = None,
 ) -> Path:
     """Run exactly one explicit preparation attempt and return its private record."""
     if quota_contract and quota_contract.configuration_sha256 != model.configuration_sha256:
@@ -223,7 +225,7 @@ def run_baseline(
     if source_policy not in {"conservative-v1", "historical"}:
         raise ValueError("Unknown source normalization policy")
 
-    if variant not in {"A-current-baseline", "B-direct"}:
+    if variant not in {"A-current-baseline", "B-direct", "C-conditional"}:
         raise ValueError("Unknown experiment variant")
     if capacity is not None:
         capacity.validate(simulated_model=model.simulated, configuration_sha256=model.configuration_sha256, model_id=model.id)
@@ -317,7 +319,11 @@ def run_baseline(
 
     def direct_factory(*args, **kwargs):
         nonlocal candidate_pipeline
-        candidate_pipeline = DirectTranslationPipeline(*args, source_units=normalized.units, capacity=capacity, segmentation=segmentation, **kwargs)
+        factory = ConditionalReviewPipeline if variant == "C-conditional" else DirectTranslationPipeline
+        if variant == "C-conditional":
+            kwargs["review_policy"] = review_policy
+            kwargs["on_review"] = lambda events: _write_json(directory / "conditional-review.json", events)
+        candidate_pipeline = factory(*args, source_units=normalized.units, capacity=capacity, segmentation=segmentation, **kwargs)
         return candidate_pipeline
 
     preparation = PreparationService(
@@ -326,7 +332,7 @@ def run_baseline(
         HostManuscripts(
             manager,
             workspace,
-            pipeline_factory=direct_factory if variant == "B-direct" else TranslationPipeline,
+            pipeline_factory=direct_factory if variant != "A-current-baseline" else TranslationPipeline,
             pipeline_options={
                 "enforce_local_budgets": historical_diagnostic,
                 "output_tokens": capacity.output_tokens if capacity else 8192,
@@ -341,6 +347,9 @@ def run_baseline(
     preparation.run_next()
     asset = workspace.asset(snapshot.video_id)
     artifacts = {"raw_captions": "source.srt"}
+    if candidate_pipeline is not None and variant == "C-conditional":
+        _write_json(directory / "conditional-review.json", candidate_pipeline.review_events)
+        artifacts["conditional_review"] = "conditional-review.json"
     if normalized is not None:
         _write_json(directory / "normalized-source.json", normalized.record())
         (directory / "normalized-source.json").chmod(0o400)
@@ -438,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Private JSON array of response objects, consumed once in order",
     )
-    parser.add_argument("--variant", choices=("A-current-baseline", "B-direct"), default="A-current-baseline")
+    parser.add_argument("--variant", choices=("A-current-baseline", "B-direct", "C-conditional"), default="A-current-baseline")
     parser.add_argument("--output-strategy", choices=("whole", "semantic-chapters"), default="whole")
     parser.add_argument("--chapter-end-id", action="append", default=[])
     parser.add_argument("--chapter-target-characters", type=int, default=12000)

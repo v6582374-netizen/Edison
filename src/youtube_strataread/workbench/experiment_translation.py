@@ -198,9 +198,7 @@ class DirectTranslationPipeline(TranslationPipeline):
 
         return super()._request(key, messages, validator=validate, **options)
 
-    def _translate_chapter(
-        self, chapter: OutputChapter, full_source: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _chapter_messages(self, chapter: OutputChapter, full_source: list[dict[str, Any]]) -> list[dict[str, str]]:
         messages = [
             {"role": "system", "content": DIRECT_PROMPT},
             {
@@ -217,6 +215,13 @@ class DirectTranslationPipeline(TranslationPipeline):
         ]
         if sum(len(message["content"]) for message in messages) > self.capacity.input_characters:
             raise TranslationError("完整上下文超过已验证的输入能力；未按任意字符边界截断来源。")
+
+        return messages
+
+    def _translate_chapter(
+        self, chapter: OutputChapter, full_source: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        messages = self._chapter_messages(chapter, full_source)
 
         def validate(text):
             self._parse_units(text, chapter.source_ids)

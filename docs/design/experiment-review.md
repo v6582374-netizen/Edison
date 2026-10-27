@@ -1,0 +1,25 @@
+# Conditional automatic review in the isolated comparison
+
+[方案 C：有条件自动复核](https://github.com/v6582374-netizen/Edison/issues/73) extends the direct candidate through the same explicit `run_baseline(..., variant="C-conditional", capacity=...)` entry. `ReviewPolicy(max_repairs=2)` bounds targeted checking/repair requests per affected chapter; the supported range is one to three. This is a failure-repair bound, not a cumulative consumption budget on successful processing. Production callers and settings remain unchanged.
+
+The initial request uses B's direct prompt, complete source context and selected output ranges. When the draft passes the checks below, C publishes the same complete translation and deterministically formatted reading manuscript without another model call. The source, requested allocation, segmentation and common comparison controls remain independently recorded. C's checkpoint identity includes its variant, review prompt and review policy, so B checkpoints or changed review settings cannot silently become C results.
+
+## Triggers and affected ranges
+
+Structural checks require each selected source ID exactly once and in source order. Missing, duplicate, unknown or reordered ranges trigger repair. Malformed output, missing finish reason and explicit truncation cannot be published as a completed draft. A structurally bad but normally finished response may retain only nonconflicting contiguous source ranges; only missing or conflicting ranges are repaired. An unfinished response is replaced over the entire selected output chapter because its partial coverage cannot establish a completed translation. Other accepted chapters and ranges are not rewritten.
+
+Conditional content signals include differing normalized numeric occurrences, missing supported units, source negation without an observed translation negation marker, and multiple amounts whose ownership or unit association cannot be established by numeral presence. The small deterministic normalizer recognizes Arabic integers/decimals, comma grouping, common Chinese integer numerals and percentage spelling. Thus `25`, `25.0` and `二十五`, and `25 percent`/`百分之二十五`, do not cause rejection merely because of spelling. This is not an exhaustive multilingual numeric parser.
+
+Supported unit signals cover dollars/美元, years/年/岁, percentages and kilograms/公斤/千克. The negation lexicon is also limited. Multiple amounts trigger a source-aligned automatic check even if all digits and units are present: “Alice has 5 dollars; Ben has 10 dollars” can be wrong after swapping ownership while retaining both amounts. A source range containing grouped output text is the minimum editable range; the runner does not invent an alignment of individual translated words to cues.
+
+## Bounded response contract
+
+The targeted request contains only affected source IDs/text, any corresponding draft ranges, trigger names and available rejected draft evidence. The response must be a JSON object with `decision` (`accept` or `replace`) and ordered `units` containing `source_ids` and `text`. Its IDs must match the affected range exactly. It cannot edit another range. `accept` is allowed only for an existing structurally complete draft and must return it unchanged; missing/truncated output requires `replace`. Known supported numeric/unit/negation discrepancies still unresolved after repair stop completion. Number association remains a fallible model judgement rather than a deterministic proof.
+
+A rejected response is followed by at most the configured number of repair requests. An identical rejected response stops early as no progress. External transport failures keep the existing bounded request retry policy; account errors are not converted into repair work. A failed repair leaves the preparation failed with an actionable reason and preserves retained source and successful historical versions. No human semantic-review queue or confirmation step is introduced.
+
+## Private evidence and limits
+
+Every C run retains `conditional-review.json`, including trigger names, affected source IDs, attempt/result, rejected response and validation category when available. Existing private request records retain rendered prompts, responses, usage and finish reasons. Successful candidate provenance separately records review requests and actual changed repairs. These artifacts contain source/output text and remain under the protected private experiment root; public reports use aggregate conclusions only.
+
+Exact source-ID coverage establishes structural processing coverage, not semantic fidelity. A model can accept a wrong association, and the numeric/unit/negation lexicons can miss errors or flag valid language. Untriggered omissions, additions, entities and qualifications may remain undetected; C does not promise zero semantic errors. Source-aligned evaluation must record such gaps or unknowns independently. The deterministic suite proves the annotated cases, bounded recovery and real persistence behavior, not real proxy quality or long-content success.
