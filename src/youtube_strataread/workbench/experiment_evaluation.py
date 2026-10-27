@@ -442,6 +442,8 @@ def summarize_runs(
                         "model": record["model"],
                         "settings": record.get("comparison_settings", record["settings"]),
                         "segmentation": record.get("segmentation"),
+                        "effective_chapter_plan_sha256": record.get("effective_chapter_plan_sha256"),
+                        "source_processing": record.get("source_processing"),
                     }
                 ),
                 "state": record["state"],

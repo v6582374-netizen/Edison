@@ -25,6 +25,7 @@ from youtube_strataread.downloader import cues_to_lines, load_cues
 from youtube_strataread.downloader.request_policy import YouTubeError
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench.discovery import Candidate
+from youtube_strataread.workbench.experiment_baseline import ComparableBaselinePipeline
 from youtube_strataread.workbench.experiment_provider import (
     QuotaContract,
     classify_experiment_model,
@@ -42,11 +43,14 @@ from youtube_strataread.workbench.experiment_translation import (
     CompletionCapacity,
     DirectTranslationPipeline,
     OutputSegmentation,
+    effective_chapter_plan,
+    output_chapters,
 )
 from youtube_strataread.workbench.library import PreparationService
 from youtube_strataread.workbench.translation import (
     DEFAULTS,
     UPSTREAM_COMMIT,
+    TranslationError,
     settings,
     token_bound,
     validate_settings,
@@ -241,12 +245,12 @@ def _run_baseline(
     if source_policy not in {"conservative-v1", "historical"}:
         raise ValueError("Unknown source normalization policy")
 
-    if variant not in {"A-current-baseline", "B-direct", "C-conditional"}:
+    if variant not in {"A-current-baseline", "A-comparable-three-stage", "B-direct", "C-conditional"}:
         raise ValueError("Unknown experiment variant")
     if capacity is not None:
         capacity.validate(simulated_model=model.simulated, configuration_sha256=model.configuration_sha256, model_id=model.id)
     if variant != "A-current-baseline" and (source_policy != "conservative-v1" or capacity is None):
-        raise ValueError("Direct variants require conservative source and an explicit capacity contract")
+        raise ValueError("Comparable variants require conservative source and an explicit capacity contract")
     segmentation = segmentation or OutputSegmentation()
     config = validate_settings(config if config is not None else DEFAULTS)
     root = _checked_root(root, snapshot.path)
@@ -284,6 +288,11 @@ def _run_baseline(
         with suppress(ValueError, YouTubeError):
             normalized_identity = normalize_captions(text, source_type=snapshot.source_type,
                 verified_rolling_pairs=snapshot.verified_rolling_pairs)
+    chapter_plan = None
+    if normalized_identity is not None and variant != "A-current-baseline":
+        # Invalid plans still fail through PreparationService with retained evidence.
+        with suppress(ValueError, TranslationError):
+            chapter_plan = effective_chapter_plan(output_chapters(normalized_identity.units, segmentation))
     attempt_identity = {
         "contract": "strict-finish-and-atomic-publication-v1",
         "source": source_identity,
@@ -384,6 +393,8 @@ def _run_baseline(
     def direct_factory(*args, **kwargs):
         nonlocal candidate_pipeline
         factory = ConditionalReviewPipeline if variant == "C-conditional" else DirectTranslationPipeline
+        if variant == "A-comparable-three-stage":
+            factory = ComparableBaselinePipeline
         if variant == "C-conditional":
             kwargs["review_policy"] = review_policy
             kwargs["on_review"] = lambda events: _write_json(directory / "conditional-review.json", events)
@@ -465,6 +476,8 @@ def _run_baseline(
             "reused_stage_wall_seconds": None,
         },
         "variant": variant,
+        "effective_chapter_plan": chapter_plan,
+        "effective_chapter_plan_sha256": chapter_plan["sha256"] if chapter_plan else None,
         "segmentation": asdict(segmentation) if variant != "A-current-baseline" else {"strategy": "upstream-current"},
         "comparison_settings": {
             "country": config["country"], "temperature": 0.3,
@@ -540,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Private JSON array of response objects, consumed once in order",
     )
-    parser.add_argument("--variant", choices=("A-current-baseline", "B-direct", "C-conditional"), default="A-current-baseline")
+    parser.add_argument("--variant", choices=("A-current-baseline", "A-comparable-three-stage", "B-direct", "C-conditional"), default="A-current-baseline")
     parser.add_argument("--output-strategy", choices=("whole", "semantic-chapters"), default="whole")
     parser.add_argument("--chapter-end-id", action="append", default=[])
     parser.add_argument("--chapter-target-characters", type=int, default=12000)

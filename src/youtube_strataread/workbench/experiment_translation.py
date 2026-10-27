@@ -134,6 +134,17 @@ def _sentence_end(text: str) -> bool:
     return bool(re.search(r'[.!?。！？][\s"\'）)\]]*$', text))
 
 
+def effective_chapter_plan(chapters: tuple[OutputChapter, ...]) -> dict[str, Any]:
+    """Identify actual source ranges, independently of mechanism and prompt wire format."""
+    rows = [{"id": chapter.id, "source_ids": chapter.source_ids} for chapter in chapters]
+    return {
+        "chapters": rows,
+        "sha256": hashlib.sha256(
+            json.dumps(rows, ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest(),
+    }
+
+
 class DirectTranslationPipeline(TranslationPipeline):
     """Reuse the host request/checkpoint adapter with an independent direct mechanism."""
 
@@ -294,6 +305,7 @@ class DirectTranslationPipeline(TranslationPipeline):
                 "settings": self.config,
                 "capacity": asdict(self.capacity),
                 "segmentation": asdict(self.segmentation),
+                "effective_chapter_plan": effective_chapter_plan(self.chapters),
                 "candidate_identity_sha256": self.identity_sha256,
                 "coverage": {
                     "source_ids": coverage,
