@@ -18,6 +18,7 @@ REVIEW_PROMPT = (
     "不得修改其他范围，不摘要或扩写。只输出JSON对象：decision为accept或replace，"
     "units为source_ids/text对象数组，恰好覆盖affected_source_ids且保持顺序。"
     "结构缺失或截断必须replace；复核无误可accept并原样保留译文。"
+    "数字、单位、否定词表只提供待核实信号，不是错误证明；等义表达可以accept。"
 )
 
 
@@ -54,6 +55,8 @@ _SCALES = {"十": 10, "百": 100, "千": 1000, "万": 10000, "亿": 100000000}
 
 
 def _chinese_integer(text):
+    if all(char in _NUMERALS for char in text):
+        return str(int("".join(str(_NUMERALS[char]) for char in text)))
     total = section = digit = 0
     for char in text:
         if char in _NUMERALS:
@@ -70,14 +73,18 @@ def _chinese_integer(text):
 def _numbers(text):
     text = text.translate(str.maketrans({"兩": "两", "萬": "万", "億": "亿"})).replace("百分之", "")
     values = re.findall(
-        r"(?<![A-Za-z0-9])\d+(?:[,.]\d+)*(?![\d])|[零〇一二两三四五六七八九十百千万亿]+", text
+        r"(?<![A-Za-z0-9])\d+(?:[,.]\d+)*(?![\d])|[零〇一二两三四五六七八九十百千万亿]+(?:点[零〇一二两三四五六七八九]+)?",
+        text,
     )
-    return Counter(
-        _chinese_integer(value)
-        if value[0] in _NUMERALS or value[0] in _SCALES
-        else format(Decimal(value.replace(",", "")).normalize(), "f")
-        for value in values
-    )
+    normalized = []
+    for value in values:
+        if value[0] in _NUMERALS or value[0] in _SCALES:
+            integer, separator, fraction = value.partition("点")
+            value = _chinese_integer(integer)
+            if separator:
+                value += "." + "".join(str(_NUMERALS[char]) for char in fraction)
+        normalized.append(format(Decimal(value.replace(",", "")).normalize(), "f"))
+    return Counter(normalized)
 
 
 def _signals(source, output):
@@ -242,6 +249,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
             result="triggered",
             rejected_response=draft,
         )
+        original_current = current
         previous = _hash(draft)
         for attempt in range(1, self.review_policy.max_repairs + 1):
             self.review_attempts += 1
@@ -261,6 +269,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
             if sum(len(m["content"]) for m in repair_messages) > self.capacity.input_characters:
                 raise TranslationError("定向复核超过已验证输入能力；未发布稿件。")
             self.last_response = None
+            response = None
             try:
                 response = self._request(
                     f"conditional:repair:{chapter.id}:{attempt}", repair_messages, temperature=0.3
@@ -277,24 +286,43 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
                 replacements = self._parse_units(json.dumps({"units": value["units"]}), affected)
                 if value["decision"] == "accept" and replacements != current:
                     raise TranslationError("接受现有译文时不得改写。")
-                unresolved = []
+                remaining_signals = []
                 for replacement in replacements:
                     replacement_source = "\n".join(
                         unit["text"]
                         for unit in full_source
                         if unit["id"] in replacement["source_ids"]
                     )
-                    unresolved.extend(
-                        signal
-                        for signal in _signals(replacement_source, replacement["text"])
-                        if signal != "number_association"
+                    remaining_signals.extend(_signals(replacement_source, replacement["text"]))
+                if value["decision"] == "replace" and any(
+                    signal != "number_association" for signal in remaining_signals
+                ):
+                    # Lexical heuristics cannot prove a semantic defect. Ask the next
+                    # bounded check to judge this structurally valid replacement itself.
+                    self._event(
+                        chapter=chapter.id,
+                        triggers=triggers,
+                        affected_source_ids=affected,
+                        attempt=attempt,
+                        result="check_required",
+                        decision=value["decision"],
+                        remaining_signals=sorted(set(remaining_signals)),
                     )
-                if unresolved:
-                    raise TranslationError("定向复核后数字、单位或否定信号仍未解决。")
+                    if _hash(response) == previous:
+                        break
+                    previous = _hash(response)
+                    draft = response
+                    current = replacements
+                    structural = False
+                    triggers = sorted(set(remaining_signals))
+                    continue
             except (TranslationError, ValueError, TypeError) as error:
-                if self.last_response is None:
+                if response is None and self.last_response is None:
                     raise
-                rejected = self.last_response.text or ""
+                # Cached observations must pass the same review contract on replay.
+                # They have no fresh transport response, but their rejection still
+                # consumes this bounded slot and leads to the next repair slot.
+                rejected = response if response is not None else self.last_response.text or ""
                 self._event(
                     chapter=chapter.id,
                     triggers=triggers,
@@ -313,7 +341,7 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
             positions = {id: index for index, id in enumerate(chapter.source_ids)}
             rows.sort(key=lambda row: positions[row["source_ids"][0]])
             self._parse_units(json.dumps({"units": rows}), chapter.source_ids)
-            changed = replacements != current
+            changed = replacements != original_current
             self.repairs += int(changed)
             self._event(
                 chapter=chapter.id,
@@ -321,9 +349,12 @@ class ConditionalReviewPipeline(DirectTranslationPipeline):
                 affected_source_ids=affected,
                 attempt=attempt,
                 result="repaired" if changed else "accepted",
+                decision=value["decision"],
+                semantic_resolution="automatic_review_" + value["decision"],
+                remaining_signals=sorted(set(remaining_signals)),
             )
             return rows
-        raise TranslationError("定向复核未解决来源缺失或结构问题；已停止，未发布稿件。")
+        raise TranslationError("定向复核未解决来源结构或待核实语义信号；已停止，未发布稿件。")
 
     def _run(self, transcript):
         result = super()._run(transcript)

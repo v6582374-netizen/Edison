@@ -350,3 +350,165 @@ def test_successful_conditional_repair_is_not_stopped_by_legacy_local_budget(tmp
     assert record["state"] == "ready"
     assert record["attempts"] == 2
     assert record["consumption_policy"] == "no-local-cumulative-budget"
+
+
+def test_equivalent_year_and_chinese_decimal_can_be_accepted_without_rewrite(tmp_path):
+    snapshot = source(tmp_path, ("In 2024 it cost 2.5 dollars.",))
+    faithful = row(["cue-000001"], "二零二四年，它花费二点五美元。")
+    model = ScriptedModel(
+        [
+            {"units": [faithful]},
+            {"decision": "accept", "units": [faithful]},
+            {"decision": "accept", "units": [faithful]},
+        ]
+    )
+    result = run(tmp_path, model, snapshot)
+    record = json.loads(result.read_text())
+    assert record["state"] == "ready"
+    assert record["attempts"] == 2
+    assert (result.parent / "translation.md").read_text() == "二零二四年，它花费二点五美元。\n"
+    payload = json.loads(model.calls[1][0][-1]["content"])
+    assert payload["triggers"] == ["number_association"]
+    events = json.loads((result.parent / record["artifacts"]["conditional_review"]).read_text())
+    assert events[-1]["decision"] == "accept"
+    assert events[-1]["remaining_signals"] == ["number_association"]
+
+
+@pytest.mark.parametrize(
+    "original,translated,trigger",
+    [
+        ("The fraction is 0.5.", "比例为一半。", "number"),
+        ("It costs 25 dollars.", "价格是25美金。", "unit"),
+        ("There is no evidence.", "证据尚缺。", "negation"),
+    ],
+)
+def test_explicit_review_can_resolve_fallible_signals_for_valid_paraphrase(
+    tmp_path, original, translated, trigger
+):
+    snapshot = source(tmp_path, (original,))
+    faithful = row(["cue-000001"], translated)
+    model = ScriptedModel(
+        [
+            {"units": [faithful]},
+            {"decision": "accept", "units": [faithful]},
+            {"decision": "accept", "units": [faithful]},
+        ]
+    )
+    result = run(tmp_path, model, snapshot)
+    record = json.loads(result.read_text())
+    assert record["state"] == "ready"
+    assert record["attempts"] == 2
+    assert (result.parent / "translation.md").read_text() == translated + "\n"
+    events = json.loads((result.parent / record["artifacts"]["conditional_review"]).read_text())
+    assert trigger in events[0]["triggers"]
+    assert trigger in events[-1]["remaining_signals"]
+    assert events[-1]["semantic_resolution"] == "automatic_review_accept"
+    provenance = json.loads(
+        (result.parent / record["artifacts"]["candidate_provenance"]).read_text()
+    )
+    assert provenance["coverage"]["semantic_fidelity_verified"] is False
+
+
+def test_replacement_with_remaining_signal_requires_review_of_the_new_candidate(tmp_path):
+    snapshot = source(tmp_path, ("The fraction is 0.5.",))
+    wrong = row(["cue-000001"], "比例为0.6。")
+    faithful = row(["cue-000001"], "比例为一半。")
+    model = ScriptedModel(
+        [
+            {"units": [wrong]},
+            {"decision": "replace", "units": [faithful]},
+            {"decision": "accept", "units": [faithful]},
+        ]
+    )
+    result = run(tmp_path, model, snapshot)
+    record = json.loads(result.read_text())
+    assert record["state"] == "ready"
+    assert record["attempts"] == 3
+    assert json.loads(model.calls[2][0][-1]["content"])["current_translation"] == [faithful]
+    events = json.loads((result.parent / record["artifacts"]["conditional_review"]).read_text())
+    assert events[1]["result"] == "check_required"
+    assert events[1]["remaining_signals"] == ["number"]
+    assert events[-1]["decision"] == "accept"
+    assert (result.parent / "translation.md").read_text() == "比例为一半。\n"
+    provenance = json.loads(
+        (result.parent / record["artifacts"]["candidate_provenance"]).read_text()
+    )
+    assert provenance["review"]["repairs"] == 1
+
+
+def test_rejected_repair_replays_after_process_loss_and_reaches_next_repair(tmp_path):
+    class ProcessLoss(BaseException):
+        pass
+
+    snapshot = source(tmp_path)
+    correct = [row(["cue-000001"], "年龄是25岁。"), row(["cue-000002"], "顺序保持不变。")]
+    first = run(tmp_path, ScriptedModel([{"units": correct}]), snapshot)
+    workspace = LocalWorkspace.open(tmp_path / "run/workspace")
+    historical = workspace.document("sample")
+    bad_repair = {"decision": "replace", "units": []}
+    scripted = ScriptedModel(
+        [
+            {"units": [row(["cue-000001"], "年龄是26岁。"), correct[1]]},
+            bad_repair,
+        ]
+    )
+    calls = 0
+
+    def interrupted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise ProcessLoss()
+        return scripted(*args, **kwargs)
+
+    with pytest.raises(ProcessLoss):
+        run(tmp_path, interrupted, snapshot, attempt_id="rejected-repair")
+    assert workspace.document("sample") == historical
+    resumed_model = ScriptedModel([{"decision": "replace", "units": [correct[0]]}])
+    resumed = run(tmp_path, resumed_model, snapshot, attempt_id="rejected-repair", mode="resume")
+    record = json.loads(resumed.read_text())
+    assert record["state"] == "ready"
+    assert record["attempts"] == 1
+    assert len(resumed_model.calls) == 1
+    assert record["artifacts"]["manuscript_version"] == 2
+    events = json.loads((resumed.parent / record["artifacts"]["conditional_review"]).read_text())
+    assert events[1]["attempt"] == 1
+    assert events[1]["result"] == "rejected"
+    assert json.loads(events[1]["rejected_response"]) == bad_repair
+    assert events[-1]["attempt"] == 2
+    assert events[-1]["result"] == "repaired"
+    assert Path(historical["translation_path"]).read_text().startswith("年龄是25岁。")
+    assert json.loads(first.read_text())["state"] == "ready"
+    assert len(workspace.generation_records("sample")) == 2
+
+
+@pytest.mark.parametrize(
+    "draft,reviews",
+    [
+        (
+            {"units": []},
+            [
+                {"decision": "accept", "units": [row(["cue-000001"], "年龄是25岁。")]},
+                {"decision": "accept", "units": [row(["cue-000001"], "年龄是25岁。")]},
+            ],
+        ),
+        (
+            {"units": [row(["cue-000001"], "年龄是26岁。")]},
+            [
+                {"decision": "replace", "units": [row(["cue-000001"], "年龄是27岁。")]},
+                {"decision": "replace", "units": [row(["cue-000001"], "年龄是28岁。")]},
+            ],
+        ),
+    ],
+)
+def test_structural_accept_and_unresolved_replacements_never_publish(tmp_path, draft, reviews):
+    snapshot = source(tmp_path, ("Age is 25 years.",))
+    model = ScriptedModel([draft, *reviews])
+    result = run(tmp_path, model, snapshot)
+    record = json.loads(result.read_text())
+    assert record["state"] == "failed"
+    assert record["attempts"] == 3
+    assert "manuscript" not in record["artifacts"]
+    workspace = LocalWorkspace.open(tmp_path / "run/workspace")
+    assert workspace.generation_records("sample") == []
+    assert workspace.retained_transcript("sample")["content"] == snapshot.path.read_text()
