@@ -55,15 +55,17 @@ class ManuscriptGenerator(Protocol):
 
 
 class YtDlpCaptions:
-    def __init__(self, requests: YouTubeRequestPolicy | None = None) -> None:
+    def __init__(self, requests: YouTubeRequestPolicy | None = None, *, speech_only: bool = False) -> None:
         self.requests = requests
+        self.speech_only = speech_only
         self.on_metadata: Callable[[str, float | None], None] | None = None
 
     def acquire(self, url: str, *, before_subtitles: Callable[[dict[str, Any]], None] | None = None) -> SubtitleResult:
         cookies = youtube_cookie_file()
         try:
             return download_subtitles(url, cookiefile=cookies, request_policy=self.requests,
-                                      on_metadata=self.on_metadata, before_subtitles=before_subtitles)
+                                      on_metadata=self.on_metadata, before_subtitles=before_subtitles,
+                                      **({"speech_only": True} if self.speech_only else {}))
         except YouTubeError as error:
             # yt-dlp can report an empty subtitle list when YouTube has served
             # a bot check instead of video metadata. Verify before saying the
@@ -89,6 +91,7 @@ class PreparationService:
     captions: CaptionAcquirer
     manuscripts: ManuscriptGenerator
     shorts: ShortsClassifier = field(default_factory=YouTubeShortsClassifier)
+    transcript_normalizer: Callable[[str, str], str] | None = None
     _claim_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _stopping: bool = field(default=False, init=False, repr=False)
 
@@ -200,7 +203,10 @@ class PreparationService:
                     video_id, language=subtitles.language, srt_text=srt_text
                 )
                 self.workspace.youtube_requests.caption_succeeded()
-            transcript = "\n".join(cues_to_lines(load_cues(srt_text))).strip()
+            transcript = (
+                self.transcript_normalizer(srt_text, source_language)
+                if self.transcript_normalizer else "\n".join(cues_to_lines(load_cues(srt_text)))
+            ).strip()
             if not transcript:
                 raise YouTubeError("subtitle was empty after cleanup")
         except PreparationDeferred:

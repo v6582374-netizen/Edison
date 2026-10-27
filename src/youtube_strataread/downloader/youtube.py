@@ -70,6 +70,7 @@ def download_subtitles(
     request_policy: YouTubeRequestPolicy | None = None,
     on_metadata: Callable[[str, float | None], None] | None = None,
     before_subtitles: Callable[[dict], None] | None = None,
+    speech_only: bool = False,
 ) -> SubtitleResult:
     """Fetch the best-available SRT subtitle for ``url``.
 
@@ -153,8 +154,14 @@ def download_subtitles(
     subs = info.get("subtitles") or {}
     auto = info.get("automatic_captions") or {}
 
+    if speech_only:
+        # Opt-in experiment policy: chat is audience discussion, never speech.
+        subs = {key: value for key, value in subs.items() if key != _LIVE_CHAT_LANG}
+        auto = {key: value for key, value in auto.items() if key != _LIVE_CHAT_LANG}
     lang, is_auto = _pick_language(subs, auto, preferred_lang)
     if lang is None:
+        if speech_only:
+            raise YouTubeError("暂无可用字幕，未处理")
         raise YouTubeError(
             "no subtitles (official, auto-generated, or live_chat fallback) were available for this video"
         )
