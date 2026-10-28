@@ -8,6 +8,7 @@ import math
 import os
 import shutil
 import sqlite3
+import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -66,6 +67,7 @@ class LibrarySnapshot:
 
 
 class LocalWorkspace:
+    _publication_lock = threading.RLock()
     """Owns the durable local boundary that the desktop host cannot access directly."""
 
     def __init__(self, root: Path) -> None:
@@ -653,63 +655,39 @@ class LocalWorkspace:
         }
 
     def save_manuscript(
-        self,
-        video_id: str,
-        markdown: str,
-        *,
-        generator: str,
-        transcript_characters: int,
-        translation: str | None = None,
+        self, video_id: str, markdown: str, *, generator: str,
+        transcript_characters: int, translation: str | None = None,
         provenance: dict[str, Any] | None = None,
     ) -> dict[str, object]:
-        with sqlite3.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT COALESCE(MAX(version), 0) + 1 FROM manuscripts WHERE video_id = ?",
-                (video_id,),
+        content = markdown.rstrip() + "\n"
+        with self._publication_lock, sqlite3.connect(self.database_path, timeout=30) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current_state = connection.execute(
+                "SELECT preparation_state FROM candidates WHERE video_id = ?", (video_id,)
             ).fetchone()
-            version = int(row[0])
-        directory = self._asset_directory(video_id) / f"manuscript-v{version}"
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / "manuscript.md"
-        path.write_text(markdown.rstrip() + "\n", encoding="utf-8")
-        if translation is not None:
-            (directory / "translation.md").write_text(translation.rstrip() + "\n", encoding="utf-8")
-        if provenance is not None:
-            (directory / "translation-run.json").write_text(
-                json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        created_at = time.time()
-        with sqlite3.connect(self.database_path) as connection:
-            connection.execute(
-                """
-                INSERT INTO manuscripts (video_id, version, path, markdown, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (video_id, version, str(path), markdown.rstrip() + "\n", created_at),
-            )
-            connection.execute(
-                """
-                UPDATE candidates SET manuscript_version = ?, manuscript_path = ?
-                WHERE video_id = ?
-                """,
-                (version, str(path), video_id),
-            )
-            connection.execute(
-                """
-                INSERT INTO generation_records
-                    (video_id, manuscript_version, generator, transcript_characters,
-                     manuscript_characters, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    video_id,
-                    version,
-                    generator,
-                    transcript_characters,
-                    len(markdown.rstrip() + "\n"),
-                    created_at,
-                ),
-            )
+            existing = connection.execute(
+                "SELECT version, path, created_at FROM manuscripts WHERE video_id = ? AND markdown = ? ORDER BY version DESC LIMIT 1",
+                (video_id, content),
+            ).fetchone() if current_state and current_state[0] == "ready" else None
+            if existing is not None:
+                return {"version": int(existing[0]), "path": str(existing[1]), "created_at": float(existing[2]), "idempotent": True}
+            version = int(connection.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM manuscripts WHERE video_id = ?", (video_id,)
+            ).fetchone()[0])
+            directory = self._asset_directory(video_id) / f"manuscript-v{version}"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / "manuscript.md"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(content, encoding="utf-8")
+            temporary.replace(path)
+            if translation is not None:
+                (directory / "translation.md").write_text(translation.rstrip() + "\n", encoding="utf-8")
+            if provenance is not None:
+                (directory / "translation-run.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8")
+            created_at = time.time()
+            connection.execute("INSERT INTO manuscripts (video_id, version, path, markdown, created_at) VALUES (?, ?, ?, ?, ?)", (video_id, version, str(path), content, created_at))
+            connection.execute("UPDATE candidates SET manuscript_version = ?, manuscript_path = ? WHERE video_id = ?", (version, str(path), video_id))
+            connection.execute("INSERT INTO generation_records (video_id, manuscript_version, generator, transcript_characters, manuscript_characters, created_at) VALUES (?, ?, ?, ?, ?, ?)", (video_id, version, generator, transcript_characters, len(content), created_at))
         return {"version": version, "path": str(path), "created_at": created_at}
 
     def generation_records(self, video_id: str) -> list[dict[str, object]]:

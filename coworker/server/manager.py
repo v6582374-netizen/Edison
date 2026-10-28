@@ -5677,6 +5677,9 @@ class SessionManager:
     def provider_complete(self, model, messages, tools=None, **settings):
         return self.provider.complete(model=model, messages=messages, tools=tools, **settings)
 
+    def provider_complete_once(self, model, messages, tools=None, **settings):
+        return self.provider.complete_once(model=model, messages=messages, tools=tools, **settings)
+
     def _refresh_provider(self, name: Optional[str] = None) -> None:
         """Drop the router's cached client(s) so the next turn rebuilds with fresh config.
         No-op for an injected non-router provider (tests)."""

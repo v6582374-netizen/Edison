@@ -644,6 +644,13 @@ export function YouTubeView({
                     }
                   >
                     {yt("生成新版本")}</button>
+                  {selected.source_trace.translation_available && !selected.manuscript_version && (
+                    <button className="yp-link" disabled={busy} onClick={() => void panelAction(async () => {
+                      setSelected(await call<Inspection>("library.retry_composition", { video_id: selectedId }));
+                      setPanelMessage(yt("已重试成稿；完整译文保持不变。"));
+                      await refresh();
+                    })}>{yt("重试成稿")}</button>
+                  )}
                   <button
                     className="yp-link"
                     disabled={busy}

@@ -106,6 +106,14 @@ class ProviderClient(ABC):
     deliberately without a `max_turns` loop — the runtime owns the agent loop.
     """
 
+    def complete_once(self, **settings: Any) -> AssistantTurn:
+        """One outbound request, with no SDK, parameter or authentication retries.
+
+        Adapters must opt in after disabling their transport retries. Unsupported
+        adapters fail before I/O rather than silently multiplying a task allowance.
+        """
+        raise RuntimeError("当前模型适配器尚不支持有界整份成稿请求；译文仍可用。")
+
     @abstractmethod
     def complete(
         self,
