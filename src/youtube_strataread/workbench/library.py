@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import threading
 from collections.abc import Callable
@@ -279,10 +280,8 @@ class PreparationService:
         except Exception as error:
             if isinstance(error, CompositionRetryable):
                 self.workspace.defer_retry(video_id, Failure("transient", str(error), None))
-                try:
+                with contextlib.suppress(KeyError):
                     self.workspace.set_preparation_state(video_id, "translation_ready", str(error))
-                except KeyError:
-                    pass
                 return True
             failure = classify_model(error, self.workspace.now())
             if failure.kind == "account":
