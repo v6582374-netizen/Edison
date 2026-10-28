@@ -2,12 +2,11 @@
 from types import SimpleNamespace
 
 import pytest
+from shorts_fixture import RegularVideos
+from test_workbench_library import FakeCaptions, candidate
 
 from coworker.providers.base import AssistantTurn
 from coworker.server.youtube import HostManuscripts
-from shorts_fixture import RegularVideos
-from test_workbench_library import FakeCaptions, candidate
-from translation_fixture import EchoModel
 from youtube_strataread.downloader.youtube import SubtitleResult
 from youtube_strataread.workbench.library import LibraryService, PreparationService
 from youtube_strataread.workbench.workspace import LocalWorkspace
