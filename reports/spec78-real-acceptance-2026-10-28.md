@@ -38,6 +38,17 @@ This sample also exercised the product's saved-result path. The long-sample capa
 
 The approximately four-hour initial-stage run encountered one temporary provider-unavailable response after 23 initial checkpoints. Edison retained the checkpoint as `waiting_retry`; a resumed isolated run continued and completed all 65 initial chunks. The outage was not converted into a success signal. This demonstrates checkpoint recovery independently of the direct composition result.
 
+## Independent production switch evaluation
+
+| Gate | Result | Evidence and remaining boundary |
+| --- | --- | --- |
+| One-request capacity for approximately two-hour and four-hour initial translations | PASS | Both direct composition requests returned `stop` and produced saved artifacts with provider usage. |
+| Initial-stage checkpoint recovery | PASS | The four-hour run recovered from one temporary provider-unavailable response and completed all 65 initial chunks. |
+| Product persistence and version binding for the long samples | PARTIAL | The short complete path persisted translation and manuscript versions. The long capacity probe saved files and metadata in isolated workspaces, but did not rerun the product Web save/copy/download controls. |
+| Semantic/editorial completeness | NOT ASSESSED | No source-coverage, factual, numeric, length, or human editorial review was performed. |
+
+The capacity gate is therefore satisfied, but this evidence does not authorize an automatic production cutover. A reviewer should inspect the two saved long artifacts and perform one product-level staging run covering version binding plus copy/download before switching the production path. Any provider failure in that run must remain a failed manuscript with the initial translation retained.
+
 ## Acceptance conclusion
 
 The real provider accepted the complete concatenated initial translations for both the approximately two-hour and approximately four-hour samples as one `whole-markdown-v1` context. Both requests returned `finish_reason=stop`, produced saved Markdown artifacts, and reported provider usage. This answers the capacity question posed by this test: the initial translations at these observed sizes can be passed directly to the composition model in one request.
