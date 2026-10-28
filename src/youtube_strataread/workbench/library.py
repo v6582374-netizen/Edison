@@ -231,6 +231,12 @@ class PreparationService:
                 if generate_result
                 else None
             )
+            if result is not None and result.translation:
+                self.workspace.save_translation(video_id, result.translation, provenance=result.provenance)
+                if not result.markdown:
+                    self.workspace.set_preparation_state(video_id, "translation_ready")
+                    self.workspace.model_account_succeeded(account)
+                    return True
             markdown = (
                 result.markdown if result else self.manuscripts.generate(transcript)
             ).strip()
@@ -307,16 +313,14 @@ class LibraryService:
                 "video_url": asset["url"],
                 "transcript_available": bool(asset["transcript_path"]),
                 "transcript_path": asset["transcript_path"],
-                "translation_available": bool(
-                    self.workspace.document(video_id).get("translation_path")
-                )
-                if asset["manuscript_version"]
-                else False,
+                "translation_available": bool(asset["translation_version"]) or bool(
+                    asset["manuscript_version"] and self.workspace.document(video_id).get("translation_path")
+                ),
             },
         }
 
-    def document(self, video_id: str) -> dict[str, object]:
-        return self.workspace.document(video_id)
+    def document(self, video_id: str, *, kind: str = "manuscript", version: int | None = None) -> dict[str, object]:
+        return self.workspace.document(video_id, kind=kind, version=version)
 
     def set_reading_state(self, video_id: str, state: str) -> dict[str, object]:
         self.workspace.set_reading_state(video_id, state)

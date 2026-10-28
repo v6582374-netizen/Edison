@@ -412,9 +412,9 @@ class LocalWorkspace:
     def set_preparation_state(
         self, video_id: str, state: str, failure_reason: str | None = None
     ) -> None:
-        if state not in {"queued", "acquiring", "generating", "ready", "unavailable", "failed"}:
+        if state not in {"queued", "acquiring", "generating", "ready", "translation_ready", "unavailable", "failed"}:
             raise ValueError(f"unknown preparation state: {state}")
-        completed_at = time.time() if state in {"ready", "unavailable", "failed"} else None
+        completed_at = time.time() if state in {"ready", "translation_ready", "unavailable", "failed"} else None
         with sqlite3.connect(self.database_path) as connection:
             cursor = connection.execute(
                 """
@@ -752,8 +752,8 @@ class LocalWorkspace:
             row = connection.execute(
                 """
                 SELECT c.video_id, c.channel_id, c.channel_title, c.title, c.url, c.published_at, c.playlist_added_at, c.source_observed_at, c.source_observed_from, c.source_observed_until, c.discovered_at, c.published_ts, c.timing_status, c.completion_status, c.actual_start_at, c.actual_end_at, c.scheduled_start_at, c.timing_checked_at,
-                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version,
-                       c.manuscript_path, c.preparation_completed_at, c.duration_seconds,
+                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version, c.translation_version,
+                       c.manuscript_path, c.translation_path, c.preparation_completed_at, c.duration_seconds,
                        t.path AS transcript_path
                 FROM candidates c LEFT JOIN transcripts t ON t.video_id = c.video_id
                 WHERE c.video_id = ?
@@ -780,7 +780,7 @@ class LocalWorkspace:
         clauses: list[str] = ["(c.preparation_state != 'filtered' OR c.manuscript_version IS NOT NULL)"]
         values: list[object] = []
         if documents_only:
-            clauses.append("c.manuscript_version IS NOT NULL")
+            clauses.append("(c.manuscript_version IS NOT NULL OR c.translation_version IS NOT NULL)")
         if unread_only:
             clauses.append("c.reading_state != 'read'")
         if reading_state:
@@ -812,8 +812,8 @@ class LocalWorkspace:
             rows = connection.execute(
                 f"""
                 SELECT c.video_id, c.channel_id, c.channel_title, c.title, c.url, c.published_at, c.playlist_added_at, c.source_observed_at, c.source_observed_from, c.source_observed_until, c.discovered_at, c.published_ts, c.timing_status, c.completion_status, c.actual_start_at, c.actual_end_at, c.scheduled_start_at, c.timing_checked_at,
-                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version,
-                       c.manuscript_path, c.preparation_completed_at, c.duration_seconds,
+                       c.preparation_state, c.failure_reason, c.reading_state, c.manuscript_version, c.translation_version,
+                       c.manuscript_path, c.translation_path, c.preparation_completed_at, c.duration_seconds,
                        SUBSTR(m.markdown, 1, 400) AS excerpt,
                        LENGTH(m.markdown) AS manuscript_characters,
                        CASE WHEN t.video_id IS NULL THEN 0 ELSE 1 END AS transcript_available
@@ -837,27 +837,54 @@ class LocalWorkspace:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def document(self, video_id: str) -> dict[str, object]:
+    def document(self, video_id: str, *, kind: str = "manuscript", version: int | None = None) -> dict[str, object]:
+        if kind not in {"translation", "manuscript"}:
+            raise ValueError("请选择完整译文或阅读稿。")
         with sqlite3.connect(self.database_path) as connection:
             connection.row_factory = sqlite3.Row
+            if kind == "translation":
+                selected = version or self.asset(video_id)["translation_version"]
+                row = connection.execute(
+                    "SELECT path, markdown, version, provenance FROM translations WHERE video_id=? AND version=?",
+                    (video_id, selected),
+                ).fetchone()
+                if row:
+                    return {**dict(row), "kind": kind, "provenance": json.loads(row["provenance"])}
+            selected = version or self.asset(video_id)["manuscript_version"]
             row = connection.execute(
-                """
-                SELECT m.path, m.markdown, m.version FROM manuscripts m
-                JOIN candidates c ON c.video_id = m.video_id AND c.manuscript_version = m.version
-                WHERE m.video_id = ?
-                """,
-                (video_id,),
+                "SELECT path, markdown, version FROM manuscripts WHERE video_id=? AND version=?",
+                (video_id, selected),
             ).fetchone()
         if row is None:
-            raise KeyError(f"asset has no manuscript: {video_id}")
-        return {
-            "path": str(row["path"]),
-            "markdown": str(row["markdown"]),
-            "version": row["version"],
-            "translation_path": str(Path(row["path"]).with_name("translation.md"))
-            if Path(row["path"]).with_name("translation.md").exists()
-            else None,
-        }
+            raise KeyError(f"asset has no {kind}: {video_id}")
+        legacy_translation = Path(row["path"]).with_name("translation.md")
+        if kind == "translation":
+            if not legacy_translation.is_file():
+                raise KeyError(f"asset has no translation: {video_id}")
+            return {"path": str(legacy_translation), "markdown": legacy_translation.read_bytes().decode("utf-8"), "version": row["version"], "kind": kind}
+        return {**dict(row), "translation_path": str(legacy_translation) if legacy_translation.is_file() else None}
+
+    def save_translation(self, video_id: str, translation: str, *, provenance: dict[str, Any] | None = None) -> dict[str, object]:
+        if not translation.strip():
+            raise ValueError("上游未返回可用译文。")
+        provenance = provenance or {}
+        identity = hashlib.sha256(json.dumps([translation, provenance], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT version, path FROM translations WHERE video_id=? AND identity=?", (video_id, identity)).fetchone()
+            if existing:
+                return {"version": existing[0], "path": existing[1]}
+            version = connection.execute("SELECT COALESCE(MAX(version),0)+1 FROM translations WHERE video_id=?", (video_id,)).fetchone()[0]
+            directory = self._asset_directory(video_id) / f"translation-v{version}"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / "translation.md"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_bytes(translation.encode("utf-8"))
+            temporary.replace(path)
+            (directory / "translation-run.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8")
+            connection.execute("INSERT INTO translations VALUES (?,?,?,?,?,?,?)", (video_id, version, str(path), translation, json.dumps(provenance, ensure_ascii=False), identity, time.time()))
+            connection.execute("UPDATE candidates SET translation_version=?, translation_path=? WHERE video_id=?", (version, str(path), video_id))
+        return {"version": version, "path": str(path)}
 
     def recover_interrupted_preparations(self) -> None:
         """Called once by the owning host on startup, not on every workspace read."""
@@ -913,6 +940,7 @@ class LocalWorkspace:
             connection.execute("DELETE FROM preparation_console WHERE video_id = ?", (video_id,))
             connection.execute("DELETE FROM generation_records WHERE video_id = ?", (video_id,))
             connection.execute("DELETE FROM manuscripts WHERE video_id = ?", (video_id,))
+            connection.execute("DELETE FROM translations WHERE video_id = ?", (video_id,))
             connection.execute("DELETE FROM transcripts WHERE video_id = ?", (video_id,))
             cursor = connection.execute("DELETE FROM candidates WHERE video_id = ?", (video_id,))
         if cursor.rowcount != 1:
@@ -928,7 +956,7 @@ class LocalWorkspace:
                 GROUP BY preparation_state"""
             ).fetchall()
             document_count = connection.execute(
-                "SELECT COUNT(*) FROM candidates WHERE manuscript_version IS NOT NULL"
+                "SELECT COUNT(*) FROM candidates WHERE manuscript_version IS NOT NULL OR translation_version IS NOT NULL"
             ).fetchone()[0]
             transcript_characters = connection.execute(
                 "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM transcripts"
@@ -1191,11 +1219,18 @@ class LocalWorkspace:
                     preparation_started_at REAL,
                     preparation_completed_at REAL,
                     manuscript_version INTEGER,
-                    manuscript_path TEXT
+                    manuscript_path TEXT,
+                    translation_version INTEGER, translation_path TEXT
                 );
                 CREATE TABLE IF NOT EXISTS transcripts (
                     video_id TEXT PRIMARY KEY REFERENCES candidates(video_id) ON DELETE CASCADE,
                     language TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS translations (
+                    video_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL, path TEXT NOT NULL, markdown TEXT NOT NULL,
+                    provenance TEXT NOT NULL, identity TEXT NOT NULL, created_at REAL NOT NULL,
+                    PRIMARY KEY (video_id, version), UNIQUE(video_id, identity)
                 );
                 CREATE TABLE IF NOT EXISTS manuscripts (
                     video_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
@@ -1225,6 +1260,8 @@ class LocalWorkspace:
                 "preparation_started_at": "REAL",
                 "preparation_completed_at": "REAL",
                 "manuscript_version": "INTEGER",
+                "translation_version": "INTEGER",
+                "translation_path": "TEXT",
                 "manuscript_path": "TEXT",
                 "shorts_status": "TEXT NOT NULL DEFAULT 'unknown'",
                 "shorts_checked_at": "REAL",

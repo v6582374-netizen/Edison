@@ -101,7 +101,7 @@ def handle_request(
         if library is not None and capability == "library.delete":
             return _response(request_id, result=library.delete(_video_id(arguments)))
         if library is not None and capability == "documents.get":
-            return _response(request_id, result=library.document(_video_id(arguments)))
+            return _response(request_id, result=library.document(_video_id(arguments), kind=str(arguments.get("kind") or "manuscript"), version=arguments.get("version")))
         if library is not None and capability in {"activity.cancel", "activity.restore"}:
             video_ids = arguments.get("video_ids")
             if (

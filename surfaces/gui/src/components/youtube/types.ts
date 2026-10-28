@@ -12,6 +12,7 @@ export type Asset = {
   preparation_state: string;
   reading_state: string;
   manuscript_version: number | null;
+  translation_version?: number | null;
   failure_reason: string | null;
   excerpt?: string;
   manuscript_characters?: number;

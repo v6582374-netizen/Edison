@@ -27,7 +27,6 @@ export function YouTubeTranslationSettings() {
   const [draft, setDraft] = useState<Config | null>(null);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [stage, setStage] = useState<Stage>("initial");
-  const [variant, setVariant] = useState("user");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -54,11 +53,6 @@ export function YouTubeTranslationSettings() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
-  const edit = (role: string, value: string) => {
-    if (!draft || stage === "summary") return;
-    setMessage("");
-    setDraft({ ...draft, prompts: { ...draft.prompts, [stage]: { ...draft.prompts[stage], [role]: value } } });
-  };
   return <section aria-label={yt("YouTube 生成规则")}>
     <PanelHead title={yt("YouTube 生成规则")} sub={yt("修改只影响后续新任务。")} />
     <NoticeStack messages={[error, message].map(value => value ? yt(value) : "")} />
@@ -66,7 +60,7 @@ export function YouTubeTranslationSettings() {
       <div className="flex flex-wrap gap-2 mb-5" role="tablist" aria-label={yt("翻译阶段")}>
         {stages.map(([key, label]) => <button key={key} role="tab" aria-selected={stage === key}
           className={button + (stage === key ? " bg-panel text-accent" : " text-muted")}
-          onClick={() => { setStage(key); setVariant("user"); }}>{label}</button>)}
+          onClick={() => { setStage(key); }}>{label}</button>)}
       </div>
       <fieldset disabled={busy} className="space-y-5">
         {stage === "summary" ? <>
@@ -79,34 +73,9 @@ export function YouTubeTranslationSettings() {
           </div>
           <button className={button} onClick={() => { setMessage(""); setSummaryDraft(data.default_summary_prompt); }}>{yt("恢复本阶段默认提示词")}</button>
         </> : <>
-        {stage !== "composition" && <label className="block text-[13px] font-medium">{yt("任务模板类型")}<select aria-label={yt("任务模板类型")} className={input + " mt-2"} value={variant} onChange={(event) => setVariant(event.target.value)}>
-            {Object.keys(draft.prompts[stage]).filter((key) => key !== "system").map((key) => <option key={key} value={key}>{({ user: yt("单段文本"), multichunk_user: yt("多段文本"), user_region: yt("单段文本 · 指定地区"), multichunk_user_region: yt("多段文本 · 指定地区") } as Record<string, string>)[key]}</option>)}
-          </select>
-        </label>}
-        {["system", variant].map((role) => <div key={role}>
-          <label htmlFor={`translation-${role}`} className="block text-[13px] font-medium mb-2">{role === "system" ? yt("系统提示词") : yt("任务模板")}</label>
-          <textarea id={`translation-${role}`} className={input + " leading-relaxed resize-y"}
-            rows={role === "system" ? 5 : 11} value={draft.prompts[stage][role]} maxLength={64000}
-            onChange={(event) => edit(role, event.target.value)} />
-          {role !== "system" && <p className="mt-2 text-[12px] text-muted">{yt("必需占位符：")}{data.required[stage][role].map((key) => "{" + key + "}").join(" · ")}</p>}
-        </div>)}
-        <button className={button} onClick={() => {
-          setMessage(""); setDraft({ ...draft, prompts: { ...draft.prompts, [stage]: { ...data.defaults.prompts[stage] } } });
-        }}>{yt("恢复本阶段默认提示词")}</button>
-        <label className="block text-[13px] font-medium">{yt("译文地区（可选）")}<input aria-label={yt("译文地区")} className={input + " mt-2"} value={draft.country} maxLength={100} placeholder={yt("留空则使用不指定地区的审校模板")} onChange={(event) => setDraft({ ...draft, country: event.target.value })} />
-        </label>
-        <div className="rounded-xl2 border border-line bg-panel p-4 space-y-3">
-          <h3 className="text-[13px] font-medium">{yt("每条视频的处理预算")}</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <label className="text-[12px] text-muted">{yt("最多模型调用次数")}<input aria-label={yt("最多模型调用次数")} type="number" min={1} max={2000} className={input + " mt-2"}
-                value={draft.max_calls} onChange={(event) => setDraft({ ...draft, max_calls: Number(event.target.value) })} />
-            </label>
-            <label className="text-[12px] text-muted">{yt("累计 token 上限")}<input aria-label={yt("累计 token 上限")} type="number" min={1000} max={10000000} className={input + " mt-2"}
-                value={draft.max_tokens} onChange={(event) => setDraft({ ...draft, max_tokens: Number(event.target.value) })} />
-            </label>
-          </div>
-          <p className="text-[12px] text-muted leading-relaxed">{yt("超出预算将舍弃本次未完成结果，不自动重试。字幕和历史稿件保留。模型未报告用量时按保守上界计入预算。")}</p>
-        </div>
+        <p className="text-[13px] text-muted">{yt("翻译使用 translation-agent 原始完整流程与提示词，成稿规则由 Edison 固定维护。旧自定义模板与单视频累计消费预算不再用于新任务。")}</p>
+        <pre className="whitespace-pre-wrap break-words text-[12px] text-muted">{draft.prompts[stage].system}</pre>
+        <label className="block text-[13px] font-medium">{yt("译文地区（可选）")}<input aria-label={yt("译文地区")} className={input + " mt-2"} value={draft.country} maxLength={100} onChange={(event) => setDraft({ ...draft, country: event.target.value })} /></label>
         </>}
       </fieldset>
       {data.legacy_settings && <details className="mt-5 text-[12px] text-muted">

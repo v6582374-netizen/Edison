@@ -31,3 +31,7 @@ The archive is a provenance baseline, not runtime code or an independent project
 The owner authorized Chinese conversion/bypass, editable prompts, shared model configuration, durable checkpoints, resource budgets and separate manuscript composition. These are host policies around the retained library, not upstream algorithm changes. Legacy JSON-protocol templates are archived and legacy checkpoints require explicit regeneration. No silent continuation under a different contract occurs.
 
 Tests compare original function bodies (excluding only completion hooks), request sequences, signatures and results for short/long and regional/nonregional flows. They also verify custom-template dispatch, concurrent context isolation, preservation hashes and optional UI source parity. Deterministic fixtures establish integration behavior, not translation quality.
+
+## Edison downstream contract (2026-10)
+
+Edison invokes the pinned upstream public entry with upstream prompts, native segmentation, reflection, revision and concatenation. The host does not bypass Chinese input, replace templates, apply content completeness guards, impose cumulative per-video budgets, or split the returned translation for composition. The exact non-empty translation is retained as its own versioned asset before any downstream manuscript work; the existing historical settings and checkpoints remain archived for compatibility and are not reused by new tasks.
