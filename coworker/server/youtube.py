@@ -96,11 +96,12 @@ class HostManuscripts:
         video_id: str | None = None,
         *,
         source_language: str = "auto-detected source language",
+        on_translation: Any | None = None,
     ) -> TranslationResult:
         checkpoint = (
             self.workspace.translation_checkpoint(video_id) if self.workspace and video_id else None
         )
-        return TranslationPipeline(
+        pipeline = TranslationPipeline(
             self.manager.provider_complete,
             self.manager.model,
             settings(self.workspace),
@@ -109,7 +110,31 @@ class HostManuscripts:
             if self.workspace and video_id else None,
             on_console=(lambda message: self.workspace.report_console(video_id, message))
             if self.workspace and video_id else None,
-        ).run(transcript, source_lang=source_language)
+        )
+        result = pipeline.run(transcript, source_lang=source_language)
+        if on_translation is not None:
+            on_translation(result.translation, result.provenance)
+        return pipeline.compose(result.translation)
+
+    def compose_result(
+        self,
+        translation: str,
+        video_id: str | None = None,
+    ) -> TranslationResult:
+        checkpoint = (
+            self.workspace.translation_checkpoint(video_id) if self.workspace and video_id else None
+        )
+        pipeline = TranslationPipeline(
+            self.manager.provider_complete,
+            self.manager.model,
+            settings(self.workspace),
+            checkpoint,
+            on_progress=(lambda stage, detail: self.workspace.report_stage(video_id, stage, detail))
+            if self.workspace and video_id else None,
+            on_console=(lambda message: self.workspace.report_console(video_id, message))
+            if self.workspace and video_id else None,
+        )
+        return pipeline.compose(translation)
 
 
 class YouTubeWorkbench:
