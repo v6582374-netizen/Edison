@@ -602,39 +602,25 @@ export function YouTubeView({
                       {yt("打开 YouTube")}</button>
                   </dd>
                 </dl>
+                {selected.source_trace.translation_available && <p role="status">{selected.manuscript_version ? yt("译文与阅读稿已完成") : yt("译文已完成，阅读稿未完成")}</p>}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  <button
-                    className="yp-btn primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void panelAction(async () => {
-                        await call("documents.open", { video_id: selectedId });
-                        setPanelMessage(yt("已交给默认应用打开。"));
-                      })
-                    }
-                  >
-                    {yt("用默认应用打开")}</button>
-                  {selected.source_trace.translation_available && <button
-                    className="yp-btn" disabled={busy} onClick={() => void panelAction(async () => {
-                      await call("documents.open_translation", { video_id: selectedId });
-                      setPanelMessage(yt("已打开完整译文。"));
-                    })}>{yt("查看完整译文")}</button>}
-                  <button
-                    className="yp-btn"
-                    disabled={busy}
-                    onClick={() =>
-                      void panelAction(async () => {
-                        const d = await call<{ markdown: string }>(
-                          "documents.get",
-                          { video_id: selectedId },
-                        );
-                        await navigator.clipboard.writeText(d.markdown);
-                        setPanelMessage(yt("Markdown 已复制。"));
-                      })
-                    }
-                  >
-                    <Icon name="copy" />
-                    {yt("复制正文")}</button>
+                  {(["translation", "manuscript"] as const).filter(kind => kind === "translation" ? selected.source_trace.translation_available : selected.manuscript_version).map(kind => <div key={kind}>
+                    <span>{kind === "translation" ? yt("完整译文") : yt("阅读稿")}</span>
+                    <button className="yp-btn" disabled={busy} onClick={() => void panelAction(async () => {
+                      const d = await call<{ markdown: string }>("documents.get", { video_id: selectedId, kind });
+                      await navigator.clipboard.writeText(d.markdown);
+                      setPanelMessage(yt("Markdown 已复制。"));
+                    })}>{kind === "translation" ? yt("复制完整译文") : yt("复制正文")}</button>
+                    <button className="yp-btn" disabled={busy} onClick={() => void panelAction(async () => {
+                      const d = await call<{ markdown: string }>("documents.get", { video_id: selectedId, kind });
+                      const url = URL.createObjectURL(new Blob([d.markdown], { type: "text/markdown;charset=utf-8" }));
+                      const anchor = document.createElement("a");
+                      anchor.href = url; anchor.download = `${selected.title}-${kind}.md`;
+                      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      setPanelMessage(yt("Markdown 已下载。"));
+                    })}>{kind === "translation" ? yt("下载完整译文") : yt("下载阅读稿")}</button>
+                  </div>)}
                 </div>
                 <div style={{ display: "flex", gap: 16, marginTop: 22 }}>
                   <button

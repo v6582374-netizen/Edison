@@ -286,23 +286,15 @@ class YouTubeWorkbench:
                 summary_prompt = self.workspace.meta("youtube_summary_prompt") or DEFAULT_SUMMARY_PROMPT
                 if capability == "translation.set_settings":
                     config = validate_settings(arguments.get("settings"))
+                    if config["prompts"] != DEFAULTS["prompts"]:
+                        raise ValueError("翻译与成稿规则由 Edison 固定维护，旧自定义模板不再用于新任务。")
                     summary_prompt = _summary_prompt(arguments.get("summary_prompt", summary_prompt))
                     self.workspace.set_meta(
                         "youtube_translation", json.dumps(config, ensure_ascii=False)
                     )
                     self.workspace.set_meta("youtube_summary_prompt", summary_prompt)
                 elif capability == "generation.set_prompt":
-                    # Compatibility endpoint writes the same composition configuration.
-                    prompt = arguments.get("prompt")
-                    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 64000:
-                        raise ValueError("请输入 1–64000 字的生成规则。")
-                    config["prompts"]["composition"]["system"] = prompt.replace("{", "{{").replace(
-                        "}", "}}"
-                    )
-                    config = validate_settings(config)
-                    self.workspace.set_meta(
-                        "youtube_translation", json.dumps(config, ensure_ascii=False)
-                    )
+                    raise ValueError("成稿规则由 Edison 固定维护，不能通过通用生成设置覆盖。")
                 if capability.startswith("generation."):
                     return {
                         "ok": True,
@@ -322,7 +314,7 @@ class YouTubeWorkbench:
                             stage: {role: sorted(names) for role, names in pair.items()}
                             for stage, pair in REQUIRED.items()
                         },
-                        "legacy_settings": self.workspace.meta("youtube_translation_v1_archive"),
+                        "legacy_settings": self.workspace.meta("youtube_translation_v2_archive") or self.workspace.meta("youtube_translation_v1_archive"),
                     },
                 }
             except ValueError as error:
@@ -372,7 +364,7 @@ class YouTubeWorkbench:
                 return {"ok": False, "error": "无法打开原始视频，请检查默认浏览器后重试。"}
         if capability in {"documents.open", "documents.open_translation"}:
             try:
-                document = self.library.document(str(arguments.get("video_id", "")))
+                document = self.library.document(str(arguments.get("video_id", "")), kind="translation" if capability == "documents.open_translation" else "manuscript")
                 if sys.platform != "darwin":
                     raise ValueError("默认应用交接仅支持 macOS。")
                 path = (

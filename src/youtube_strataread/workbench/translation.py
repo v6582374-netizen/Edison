@@ -20,10 +20,8 @@ from pathlib import Path
 from string import Formatter
 from typing import Any
 
-from opencc import OpenCC
-
 import translation_agent
-from translation_agent import runtime, utils
+from translation_agent import runtime
 
 UPSTREAM_COMMIT = "e0fc605acbb5d78cb7a58a98bc8bd8f0056df49c"
 STAGES = ("initial", "review", "revision", "composition")
@@ -39,7 +37,7 @@ COMPOSITION = {
 }
 DEFAULTS = {
     "version": 2,
-    "prompts": {**CHINESE_PROMPTS, "composition": COMPOSITION},
+    "prompts": {**UPSTREAM_PROMPTS, "composition": COMPOSITION},
     "country": "",
     "max_calls": 240,
     "max_tokens": 1500000,
@@ -110,43 +108,18 @@ def validate_settings(value: Any) -> dict[str, Any]:
 
 
 def settings(workspace=None) -> dict[str, Any]:
+    """Keep prior settings as history; original upstream templates are fixed."""
     raw = workspace.meta("youtube_translation") if workspace else None
+    result = copy.deepcopy(DEFAULTS)
     if raw:
         old = json.loads(raw)
         if old.get("version") == 2:
-            result = validate_settings(old)
-            # Upgrade untouched English defaults without overwriting personal edits.
-            for stage, pair in UPSTREAM_PROMPTS.items():
-                for role, text in pair.items():
-                    if result["prompts"][stage][role] == text:
-                        result["prompts"][stage][role] = CHINESE_PROMPTS[stage][role]
-            if result != old:
-                workspace.set_meta("youtube_translation", encode(result))
-            return result
-    else:
-        old = None
-    result = copy.deepcopy(DEFAULTS)
+            result["country"] = old.get("country", "")
+        if old != result and workspace:
+            archive = "youtube_translation_v2_archive" if old.get("version") == 2 else "youtube_translation_v1_archive"
+            if not workspace.meta(archive):
+                workspace.set_meta(archive, raw)
     if workspace:
-        from youtube_strataread.ai.prompts import DEFAULT_PROMPT, load_prompt
-
-        if old:
-            # The superseded JSON-unit protocol cannot be applied to upstream's
-            # plain-text contract. Archive it intact rather than silently dropping edits.
-            workspace.set_meta("youtube_translation_v1_archive", raw)
-            result["max_calls"] = old.get("max_calls", result["max_calls"])
-            result["max_tokens"] = old.get("max_tokens", result["max_tokens"])
-            legacy = old.get("prompts", {}).get("composition", {}).get("system", "")
-            legacy = legacy.replace("$$", "$")
-        else:
-            legacy = workspace.meta("generation_prompt") or load_prompt()
-            if legacy.strip() == DEFAULT_PROMPT.strip():
-                legacy = ""
-        if legacy:
-            # The old system instruction is literal text, not a new-format template.
-            result["prompts"]["composition"]["system"] = legacy.replace("{", "{{").replace(
-                "}", "}}"
-            )
-        result = validate_settings(result)
         workspace.set_meta("youtube_translation", encode(result))
     return result
 
@@ -234,11 +207,6 @@ class TranslationPipeline:
         input_bound = token_bound(encode(messages))
         output_limit = 8192
         for retry in range(3):
-            if (
-                self.state["calls"] >= self.config["max_calls"]
-                or self.state["tokens"] + input_bound + output_limit > self.config["max_tokens"]
-            ):
-                raise BudgetExceeded()
             self.state["calls"] += 1
             self.state["tokens"] += input_bound + output_limit
             self._save()
@@ -282,8 +250,6 @@ class TranslationPipeline:
                 actual = input_bound + max(output_limit, token_bound(str(turn.text or "")))
             self.state["tokens"] += actual - input_bound - output_limit
             self._save()
-            if self.state["tokens"] > self.config["max_tokens"]:
-                raise BudgetExceeded()
             if (
                 not turn.text
                 or turn.tool_calls
@@ -325,12 +291,6 @@ class TranslationPipeline:
                 values["reflection_chunk"] = values["reflection_chunks"][i]
         if self.on_progress:
             self.on_progress(stage, f"第 {values['i'] + 1} 段" if multi else "")
-        pair = self.config["prompts"][stage]
-        # Edison always renders its selected templates, including Chinese defaults.
-        system_message = pair["system"].format_map(values)
-        prompt = pair[role].format_map(values)
-        source = values["chunk_to_translate"] if multi else values["source_text"]
-        validator = (lambda text: check_completeness(source, text)) if stage != "review" else None
         key = f"upstream:{self.cursor}:{function}"
         self.cursor += 1
         options = {"temperature": temperature, "top_p": 1}
@@ -339,7 +299,6 @@ class TranslationPipeline:
         return self._request(
             key,
             [{"role": "system", "content": system_message}, {"role": "user", "content": prompt}],
-            validator=validator,
             **options,
         )
 
@@ -351,13 +310,14 @@ class TranslationPipeline:
         digest = hashlib.sha256(transcript.encode()).hexdigest()
         if self.checkpoint and self.checkpoint.exists():
             self.state = json.loads(self.checkpoint.read_text(encoding="utf-8"))
-            if self.state.get("version") != 2:
+            if self.state.get("version") != 3:
                 raise TranslationError(
                     "旧版任务使用不同输出契约，不能续跑。请重新生成；字幕和历史稿件保留。"
                 )
         if self.state.get("source") != digest:
             self.state = {
-                "version": 2,
+                "version": 3,
+                "workflow": "original-upstream-v1",
                 "source": digest,
                 "source_lang": source_lang,
                 "model": self.model,
@@ -370,70 +330,27 @@ class TranslationPipeline:
         self.config = validate_settings(self.state["config"])
         self.cursor = 0
         self._save()
-        try:
-            return self._run(transcript)
-        except BudgetExceeded:
-            self._discard()
-            raise
+        return self._run(transcript)
 
     def _run(self, transcript):
-        skipped = chinese_only(transcript)
-        if skipped:
-            translation = OpenCC("t2s").convert(transcript)
-        else:
-            with runtime.bind(self._upstream_completion):
-                translation = translation_agent.translate(
-                    self.state["source_lang"],
-                    "简体中文",
-                    transcript,
-                    self.config["country"],
-                )
-            check_completeness(transcript, translation)
-        # Composition is Edison's additional behavior, after upstream translation.
-        # Reuse upstream's splitter dependency instead of maintaining another one.
-        splitter = utils.RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name="gpt-4",
-            chunk_size=utils.MAX_TOKENS_PER_CHUNK,
-            chunk_overlap=0,
-        )
-        parts = splitter.split_text(translation)
-        documents = []
-        pair = self.config["prompts"]["composition"]
-        for i, part in enumerate(parts):
-            if self.on_progress:
-                self.on_progress("composition", f"第 {i + 1} / {len(parts)} 段")
-            values = {
-                "translation": part,
-                "context": "\n".join(
-                    [
-                        parts[i - 1][-400:] if i else "",
-                        parts[i + 1][:400] if i + 1 < len(parts) else "",
-                    ]
-                ),
-            }
-            messages = [
-                {"role": role, "content": pair[role].format_map(values)}
-                for role in ("system", "user")
-            ]
-            documents.append(
-                self._request(
-                    f"composition:{i}",
-                    messages,
-                    validator=lambda text, source=part: check_completeness(
-                        source, text, composition=True
-                    ),
-                )
+        with runtime.bind(self._upstream_completion):
+            translation = translation_agent.translate(
+                self.state["source_lang"], "简体中文", transcript, self.config["country"]
             )
+        if not isinstance(translation, str) or not translation.strip():
+            raise TranslationError("上游未返回可用译文。")
         return TranslationResult(
-            markdown="\n\n".join(documents),
+            markdown="",
             translation=translation,
             provenance={
                 "upstream": UPSTREAM_COMMIT,
+                "workflow": "original-upstream-v1",
                 "model": self.model,
                 "settings": self.config,
                 "calls": self.state["calls"],
-                "budget_tokens": self.state["tokens"],
+                "reported_or_estimated_tokens": self.state["tokens"],
                 "source_sha256": self.state["source"],
-                "translation_skipped": skipped,
+                "translation_skipped": False,
+                "consumption_policy": "no-local-cumulative-budget",
             },
         )
