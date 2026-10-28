@@ -120,6 +120,8 @@ class HostManuscripts:
         self,
         translation: str,
         video_id: str | None = None,
+        *,
+        force_retry: bool = False,
     ) -> TranslationResult:
         checkpoint = (
             self.workspace.translation_checkpoint(video_id) if self.workspace and video_id else None
@@ -134,7 +136,7 @@ class HostManuscripts:
             on_console=(lambda message: self.workspace.report_console(video_id, message))
             if self.workspace and video_id else None,
         )
-        return pipeline.compose(translation)
+        return pipeline.compose(translation, force_retry=force_retry)
 
 
 class YouTubeWorkbench:

@@ -284,6 +284,17 @@ class PreparationService:
                 self.workspace.defer_retry(video_id, failure)
             else:
                 self.workspace.set_preparation_state(video_id, "failed", _safe_error(error))
+            # A complete translation is an independently usable asset. Keep its
+            # state visible when whole-manuscript composition cannot finish.
+            try:
+                if self.workspace.asset(video_id).get("translation_version"):
+                    self.workspace.set_preparation_state(
+                        video_id,
+                        "translation_ready",
+                        _safe_error(error),
+                    )
+            except KeyError:
+                pass
         return True
 
 
@@ -367,6 +378,31 @@ class LibraryService:
 
     def retry_all_failed(self) -> dict[str, object]:
         return {"queued": self.workspace.retry_failed()}
+
+    def retry_composition(self, video_id: str) -> dict[str, object]:
+        """Retry only whole-manuscript composition from the retained translation."""
+        asset = self.workspace.asset(video_id)
+        document = self.workspace.document(video_id, kind="translation")
+        if not asset.get("translation_version"):
+            raise ValueError("该资料尚未保存完整译文。")
+        generator = self.preparation.manuscripts
+        compose = getattr(generator, "compose_result", None)
+        if compose is None:
+            raise ValueError("当前处理器不支持仅重试成稿。")
+        result = compose(document["markdown"], video_id, force_retry=True)
+        if not result.markdown:
+            raise ValueError("成稿为空，译文仍可用。")
+        self.workspace.save_manuscript(
+            video_id,
+            result.markdown,
+            generator=type(generator).__name__,
+            transcript_characters=0,
+            translation=result.translation,
+            provenance=result.provenance,
+        )
+        self.workspace.translation_checkpoint(video_id).unlink(missing_ok=True)
+        self.workspace.set_preparation_state(video_id, "ready")
+        return self.inspect(video_id)
 
     def drain_pause(self) -> dict[str, object]:
         return self.preparation.request_drain_pause()
