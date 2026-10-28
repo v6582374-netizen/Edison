@@ -225,18 +225,40 @@ class PreparationService:
             if not self.workspace.commence_preparation(video_id):
                 return True
             self.workspace.set_preparation_state(video_id, "generating")
+            translation_document = None
+            translation_saved = False
+            if asset.get("translation_version"):
+                translation_document = self.workspace.document(video_id, kind="translation")
+            compose_result = getattr(self.manuscripts, "compose_result", None)
             generate_result = getattr(self.manuscripts, "generate_result", None)
-            result = (
-                generate_result(transcript, video_id, source_language=source_language)
-                if generate_result
-                else None
-            )
-            if result is not None and result.translation:
+            if translation_document and compose_result:
+                result = compose_result(str(translation_document["markdown"]), video_id)
+            elif generate_result:
+                def callback(text, provenance):
+                    nonlocal translation_saved
+                    translation_saved = True
+                    return self.workspace.save_translation(
+                        video_id, text, provenance=provenance
+                    )
+                supports_callback = "on_translation" in inspect.signature(generate_result).parameters
+                result = (
+                    generate_result(
+                        transcript,
+                        video_id,
+                        source_language=source_language,
+                        on_translation=callback,
+                    )
+                    if supports_callback
+                    else generate_result(transcript, video_id, source_language=source_language)
+                )
+            else:
+                result = None
+            if result is not None and result.translation and not translation_document and not translation_saved:
                 self.workspace.save_translation(video_id, result.translation, provenance=result.provenance)
-                if not result.markdown:
-                    self.workspace.set_preparation_state(video_id, "translation_ready")
-                    self.workspace.model_account_succeeded(account)
-                    return True
+            if result is not None and not result.markdown:
+                self.workspace.set_preparation_state(video_id, "translation_ready")
+                self.workspace.model_account_succeeded(account)
+                return True
             markdown = (
                 result.markdown if result else self.manuscripts.generate(transcript)
             ).strip()
