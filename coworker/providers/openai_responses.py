@@ -383,6 +383,12 @@ class OpenAIResponsesProvider(ProviderClient):
                 kwargs = _param_fix_retry(kwargs, exc)
         return client.responses.create(**kwargs)
 
+    def complete_once(self, *, model: str, messages: list[dict[str, Any]],
+                      tools=None, **settings: Any) -> AssistantTurn:
+        kwargs = self._request_kwargs(model=model, messages=messages, tools=tools, settings=settings)
+        response = self._ensure_client().with_options(max_retries=0).responses.create(**kwargs)
+        return _parse_response(response)
+
     def complete(
         self,
         *,

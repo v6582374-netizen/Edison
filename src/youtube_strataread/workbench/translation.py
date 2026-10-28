@@ -157,8 +157,10 @@ class TranslationPipeline:
         checkpoint: Path | None = None,
         on_progress: Callable[[str, str], None] | None = None,
         on_console: Callable[[str], None] | None = None,
+        complete_once: Callable[..., Any] | None = None,
     ):
         self.complete = complete
+        self.complete_once = complete_once or complete
         self.model = model
         self.config = validate_settings(config)
         self.checkpoint = checkpoint
@@ -212,7 +214,7 @@ class TranslationPipeline:
             started = time.monotonic()
             self._log(f"{key} request started; model={self.model}; attempt={retry + 1}; waiting for response")
             try:
-                turn = self.complete(
+                turn = (self.complete_once if composition else self.complete)(
                     self.model,
                     messages,
                     tools=None,

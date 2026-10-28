@@ -106,6 +106,7 @@ class HostManuscripts:
             self.manager.model,
             settings(self.workspace),
             checkpoint,
+            complete_once=getattr(self.manager, "provider_complete_once", self.manager.provider_complete),
             on_progress=(lambda stage, detail: self.workspace.report_stage(video_id, stage, detail))
             if self.workspace and video_id else None,
             on_console=(lambda message: self.workspace.report_console(video_id, message))
@@ -131,6 +132,7 @@ class HostManuscripts:
             self.manager.model,
             settings(self.workspace),
             checkpoint,
+            complete_once=getattr(self.manager, "provider_complete_once", self.manager.provider_complete),
             on_progress=(lambda stage, detail: self.workspace.report_stage(video_id, stage, detail))
             if self.workspace and video_id else None,
             on_console=(lambda message: self.workspace.report_console(video_id, message))

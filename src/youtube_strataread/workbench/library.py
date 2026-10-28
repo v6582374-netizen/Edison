@@ -27,6 +27,7 @@ from youtube_strataread.workbench.shorts import (
     VideoTimingUnverified,
     YouTubeShortsClassifier,
 )
+from youtube_strataread.workbench.translation import CompositionRetryable
 from youtube_strataread.workbench.workspace import LocalWorkspace
 
 
@@ -276,6 +277,13 @@ class PreparationService:
             self.workspace.set_preparation_state(video_id, "ready")
             self.workspace.model_account_succeeded(account)
         except Exception as error:
+            if isinstance(error, CompositionRetryable):
+                self.workspace.defer_retry(video_id, Failure("transient", str(error), None))
+                try:
+                    self.workspace.set_preparation_state(video_id, "translation_ready", str(error))
+                except KeyError:
+                    pass
+                return True
             failure = classify_model(error, self.workspace.now())
             if failure.kind == "account":
                 failure = self.workspace.limit_model_account(account, failure)

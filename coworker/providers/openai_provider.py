@@ -178,6 +178,9 @@ class OpenAIProvider(ProviderClient):
             self._client = OpenAI(**kwargs)
         return self._client
 
+    def complete_once(self, **settings: Any) -> AssistantTurn:
+        return self.complete(_single_attempt=True, **settings)
+
     def complete(
         self,
         *,
@@ -186,6 +189,7 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ) -> AssistantTurn:
+        single_attempt = settings.pop("_single_attempt", False)
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
@@ -197,13 +201,17 @@ class OpenAIProvider(ProviderClient):
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
+        if single_attempt:
+            client = client.with_options(max_retries=0)
         # Up to three param-fix retries: effort, the max_tokens rename, and the
         # max_tokens over-limit drop can ALL need fixing on one call.
-        for _ in range(3):
+        for _ in range(1 if single_attempt else 3):
             try:
                 response = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
+                if single_attempt:
+                    raise
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
             response = client.chat.completions.create(**kwargs)

@@ -88,6 +88,12 @@ class ProviderRouter(ProviderClient):
                 self._clients.pop(name, None)
 
     # -- ProviderClient ---------------------------------------------------------
+    def complete_once(self, *, model: str, messages, tools=None, **settings):
+        self._note_use(model)
+        return self._client_for(model).complete_once(
+            model=self._bare(model), messages=messages, tools=tools, **settings
+        )
+
     def complete(
         self,
         *,
