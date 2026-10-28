@@ -76,6 +76,14 @@ class BudgetExceeded(TranslationError):
         super().__init__("超出处理预算，本次未完成结果已舍弃；原始字幕与历史稿件保留。")
 
 
+class CompositionRetryable(TranslationError):
+    """A whole-manuscript attempt may be retried within its durable bound."""
+
+
+class CompositionExhausted(TranslationError):
+    """The durable three-request composition allowance is exhausted."""
+
+
 def validate_settings(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != set(DEFAULTS) or value["version"] != 2:
         raise ValueError("翻译设置格式无效。")
@@ -178,14 +186,26 @@ class TranslationPipeline:
 
     def _request(self, key, messages, *, validator=None, output_limit=8192, **options):
         fingerprint = hashlib.sha256(encode([messages, options]).encode()).hexdigest()
-        cached = self.state["outputs"].get(key)
+        cached = self.state.setdefault("outputs", {}).get(key)
         if cached:
             if cached["request"] != fingerprint:
                 raise TranslationError("任务上下文已变化，请重新生成，已有稿件保留。")
             self._log(f"{key} cache hit; reusing completed response")
             return cached["text"]
         input_bound = token_bound(encode(messages))
-        for retry in range(3):
+        composition = key == "composition:whole"
+        if composition:
+            attempts = int(self.state.get("composition_attempts", 0))
+            if attempts >= 3:
+                raise CompositionExhausted("成稿自动尝试次数已用尽；译文仍可用，请手动重试成稿。")
+            # Reserve before I/O. A crash can conservatively consume a slot, but
+            # restart can never multiply requests beyond the durable bound.
+            self.state["composition_attempts"] = attempts + 1
+            self._save()
+            retries = range(1)
+        else:
+            retries = range(3)
+        for retry in retries:
             self.state["calls"] += 1
             self.state["tokens"] += input_bound + (output_limit or 0)
             self._save()
@@ -208,7 +228,7 @@ class TranslationPipeline:
                     in {"APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout"}
                 )
                 self._log(f"{key} request failed; {type(error).__name__}; HTTP {getattr(error, 'status_code', None) or 'n/a'}")
-                if transient and retry < 2:
+                if transient and not composition and retry < 2:
                     self._log(f"{key} retry in {2**retry}s")
                     time.sleep(2**retry)
                     continue
@@ -216,9 +236,9 @@ class TranslationPipeline:
                     raise TranslationError(
                         "模型服务返回 HTTP 402，请检查所用服务的计费状态。已完成阶段保留。"
                     ) from error
-                raise TranslationError(
+                raise (CompositionRetryable("成稿请求暂时失败，请稍后重试。") if composition and transient else TranslationError(
                     "模型生成失败，请检查 Edison 的模型设置后重试。已完成阶段保留。"
-                ) from error
+                )) from error
             self._log(f"{key} response received; {len(turn.text or '')} characters; {time.monotonic() - started:.1f}s")
             usage = getattr(turn, "usage", None)
             actual = (
@@ -233,11 +253,11 @@ class TranslationPipeline:
                 actual = input_bound + max(output_limit or 0, token_bound(str(turn.text or "")))
             self.state["tokens"] += actual - input_bound - (output_limit or 0)
             self._save()
-            if (
-                not turn.text
-                or turn.tool_calls
-                or getattr(turn, "finish_reason", None) not in {None, "stop", "end_turn"}
-            ):
+            if not turn.text:
+                raise TranslationError("成稿为空，译文仍可用。") if composition else TranslationError("模型输出为空，未发布稿件。")
+            if turn.tool_calls or getattr(turn, "finish_reason", None) not in {None, "stop", "end_turn"}:
+                if composition:
+                    raise CompositionRetryable("成稿响应被明确截断，稍后可重试成稿。")
                 raise TranslationError("模型输出被截断或未完整结束，未发布稿件。已完成阶段保留。")
             text = str(turn.text)
             if validator:
@@ -315,10 +335,14 @@ class TranslationPipeline:
         self._save()
         return self._run(transcript)
 
-    def compose(self, translation: str) -> TranslationResult:
+    def compose(self, translation: str, *, force_retry: bool = False) -> TranslationResult:
         """Compose one complete Markdown manuscript from one retained translation."""
         if not translation.strip():
             raise TranslationError("完整译文为空，无法生成阅读稿。")
+        if not self.state and self.checkpoint and self.checkpoint.exists():
+            self.state = json.loads(self.checkpoint.read_text(encoding="utf-8"))
+            if self.state.get("version") != 3:
+                raise TranslationError("旧版任务检查点不能续跑，译文和历史稿件保留。")
         if not self.state:
             self.state = {
                 "version": 3,
@@ -331,8 +355,16 @@ class TranslationPipeline:
                 "calls": 0,
                 "tokens": 0,
             }
+        if force_retry:
+            self.state.setdefault("outputs", {}).pop("composition:whole", None)
+            self.state["composition_attempts"] = 0
         self.model = self.state.get("model", self.model)
         self.config = validate_settings(self.state.get("config", self.config))
+        expected_source = hashlib.sha256(translation.encode()).hexdigest()
+        if self.state.get("translation_sha256") not in {None, expected_source}:
+            raise TranslationError("成稿输入已变化，不能续用旧检查点；译文版本保留。")
+        self.state["translation_sha256"] = expected_source
+        self.state["composition_rule"] = COMPOSITION["version"]
         self.cursor = 0
         self._save()
         markdown = self._request(
