@@ -33,7 +33,7 @@ by --help
 ### 从 GitHub 安装（最新开发版）
 
 ```bash
-pipx install "git+https://github.com/v6582374-netizen/YouTube-StrataRead.git"
+pipx install "git+https://github.com/vincentshuo/YouTube-StrataRead.git"
 ```
 
 ### 本地开发

@@ -12,4 +12,4 @@ Metadata is extracted once and reused to download the chosen subtitle language. 
 
 Official Data API discovery has a separate persistent project-quota/service gate and local request ledger. Caption cooldown cannot delay subscription discovery. See [official discovery](../architecture/youtube-discovery.md).
 
-The canonical amendment and acceptance contract is [什么情况下自动恢复、什么情况下才打断用户](https://github.com/v6582374-netizen/Edison/issues/45#issuecomment-6258398691). It separates controlled recovery E2E from at least fourteen days of real operation; neither document changes nor short probes establish that the contract has passed.
+The canonical amendment and acceptance contract is [什么情况下自动恢复、什么情况下才打断用户](https://github.com/vincentshuo/Edison/issues/45#issuecomment-6258398691). It separates controlled recovery E2E from at least fourteen days of real operation; neither document changes nor short probes establish that the contract has passed.
