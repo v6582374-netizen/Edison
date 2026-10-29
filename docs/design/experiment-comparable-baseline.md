@@ -1,6 +1,6 @@
 # Comparable three-stage baseline for isolated experiments
 
-The [isolated comparison](https://github.com/v6582374-netizen/Edison/issues/76) selects `variant="A-comparable-three-stage"` through `run_baseline`. It uses the existing `PreparationService`, `HostManuscripts`, caption normalization and versioned persistence. No production pipeline construction or settings change.
+The [isolated comparison](https://github.com/vincentshuo/Edison/issues/76) selects `variant="A-comparable-three-stage"` through `run_baseline`. It uses the existing `PreparationService`, `HostManuscripts`, caption normalization and versioned persistence. No production pipeline construction or settings change.
 
 ```python
 record = run_baseline(

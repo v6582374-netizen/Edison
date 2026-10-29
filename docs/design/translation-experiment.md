@@ -1,6 +1,6 @@
 # Isolated translation baseline replay
 
-This is the explicit offline baseline entry for [隔离对照：建立隔离运行入口，跑通现有流程基线](https://github.com/v6582374-netizen/Edison/issues/69), within [the isolated comparison specification](https://github.com/v6582374-netizen/Edison/issues/68). It does not start a server, discovery, subscription sync, scheduling, publishing, credential lookup or production settings migration.
+This is the explicit offline baseline entry for [隔离对照：建立隔离运行入口，跑通现有流程基线](https://github.com/vincentshuo/Edison/issues/69), within [the isolated comparison specification](https://github.com/vincentshuo/Edison/issues/68). It does not start a server, discovery, subscription sync, scheduling, publishing, credential lookup or production settings migration.
 
 The implementation base is main commit `dccf993` (rather than the previously studied integration checkout). The reused translation-agent upstream is `e0fc605acbb5d78cb7a58a98bc8bd8f0056df49c`; its archive and local adaptation are documented in `docs/upstream/translation-agent/`. Each run additionally records the full running checkout commit and whether it is dirty. A dirty run is development evidence, not a reproducible released implementation.
 

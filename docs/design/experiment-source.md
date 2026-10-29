@@ -1,6 +1,6 @@
 # Fixed speech-caption sources for isolated comparisons
 
-This is the source-processing contract for [保证字幕来源完整，无字幕时明确告知](https://github.com/v6582374-netizen/Edison/issues/70), within the [isolated comparison specification](https://github.com/v6582374-netizen/Edison/issues/68). It is an explicitly selected experiment policy. Production caption cleanup and downloader behavior retain their existing defaults.
+This is the source-processing contract for [保证字幕来源完整，无字幕时明确告知](https://github.com/vincentshuo/Edison/issues/70), within the [isolated comparison specification](https://github.com/vincentshuo/Edison/issues/68). It is an explicitly selected experiment policy. Production caption cleanup and downloader behavior retain their existing defaults.
 
 `run_baseline` uses `source_policy="conservative-v1"` by default. The real `PreparationService` receives an optional `transcript_normalizer` callback, keeping its existing acquisition, status handling, `HostManuscripts` generation and persistence boundary. Omitting this callback preserves production behavior. The isolated experiment supplies a copied, read-only SRT snapshot and never starts discovery, speech recognition or production scheduling.
 

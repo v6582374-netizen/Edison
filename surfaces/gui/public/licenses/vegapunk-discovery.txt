@@ -1,6 +1,6 @@
 Edison — Vegapunk Discovery UI attribution
 
-Source: https://github.com/v6582374-netizen/Vegapunk.git
+Source: https://github.com/vincentshuo/Vegapunk.git
 Version: f8733e1367501781b0e6cc73b064bc1b2fcebbf8
 Components: PrototypeLaunchHero, PrototypeRuntimeDesk event rendering,
 Discovery beacon / event motion, and flat surface hierarchy.

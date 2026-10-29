@@ -1,6 +1,6 @@
 # Isolated experiment recovery
 
-This boundary implements [interruption and publication consistency](https://github.com/v6582374-netizen/Edison/issues/74) for the private A/B/C comparison. It changes neither the production workspace publisher nor production translation defaults, scheduler, discovery, settings or deployment.
+This boundary implements [interruption and publication consistency](https://github.com/vincentshuo/Edison/issues/74) for the private A/B/C comparison. It changes neither the production workspace publisher nor production translation defaults, scheduler, discovery, settings or deployment.
 
 ## Explicit attempts
 

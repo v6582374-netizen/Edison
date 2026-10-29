@@ -1,6 +1,6 @@
 # YouTube 连接与账号订阅同步
 
-> 本文保留旧桌面实现的连接、Keychain 与 Vault 迁移说明，不是当前自托管 Web 产品的目标架构。现行边界见 ADR 0013、ADR 0017，以及[已确认的迁移决策](https://github.com/v6582374-netizen/Edison/issues/46#issuecomment-6258668775)。新路径及旧入口退役仍待实现和验收；不能据本文推断服务器应依赖本机 Keychain，或旧迁移接口将继续保留。
+> 本文保留旧桌面实现的连接、Keychain 与 Vault 迁移说明，不是当前自托管 Web 产品的目标架构。现行边界见 ADR 0013、ADR 0017，以及[已确认的迁移决策](https://github.com/vincentshuo/Edison/issues/46#issuecomment-6258668775)。新路径及旧入口退役仍待实现和验收；不能据本文推断服务器应依赖本机 Keychain，或旧迁移接口将继续保留。
 
 Edison 使用 Google 的桌面 OAuth 流程（浏览器、随机 loopback 回调、state 校验、PKCE、只读订阅权限）。日常使用不依赖 Automic Vault。
 

@@ -1,6 +1,6 @@
 # Conditional automatic review in the isolated comparison
 
-[方案 C：有条件自动复核](https://github.com/v6582374-netizen/Edison/issues/73) extends the direct candidate through the same explicit `run_baseline(..., variant="C-conditional", capacity=...)` entry. `ReviewPolicy(max_repairs=2)` bounds targeted checking/repair requests per affected chapter; the supported range is one to three. This is a failure-repair bound, not a cumulative consumption budget on successful processing. Production callers and settings remain unchanged.
+[方案 C：有条件自动复核](https://github.com/vincentshuo/Edison/issues/73) extends the direct candidate through the same explicit `run_baseline(..., variant="C-conditional", capacity=...)` entry. `ReviewPolicy(max_repairs=2)` bounds targeted checking/repair requests per affected chapter; the supported range is one to three. This is a failure-repair bound, not a cumulative consumption budget on successful processing. Production callers and settings remain unchanged.
 
 The initial request uses B's direct prompt, complete source context and selected output ranges. When the draft passes the checks below, C publishes the same complete translation and deterministically formatted reading manuscript without another model call. The source, requested allocation, segmentation and common comparison controls remain independently recorded. C's checkpoint identity includes its variant, review prompt and review policy, so B checkpoints or changed review settings cannot silently become C results.
 

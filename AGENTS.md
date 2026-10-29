@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues、规格与 Wayfinder 决策地图统一发布到 GitHub 仓库 `v6582374-netizen/Edison`，不使用本地 Markdown 作为 tracker。See `docs/agents/issue-tracker.md`.
+Issues、规格与 Wayfinder 决策地图统一发布到 GitHub 仓库 `vincentshuo/Edison`，不使用本地 Markdown 作为 tracker。See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

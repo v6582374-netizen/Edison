@@ -91,7 +91,7 @@ def _repository() -> dict[str, Any]:
         return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
 
     return {
-        "url": "https://github.com/v6582374-netizen/Edison",
+        "url": "https://github.com/vincentshuo/Edison",
         "base_commit": git("rev-parse", BASE_COMMIT),
         "implementation_commit": git("rev-parse", "HEAD"),
         "dirty": bool(git("status", "--porcelain")),

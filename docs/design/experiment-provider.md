@@ -1,6 +1,6 @@
 # Experimental consumption and proxy evidence
 
-[取消实验中的本地消费上限，验证真实代理行为](https://github.com/v6582374-netizen/Edison/issues/71) changes the isolated experiment only. Main A execution supplies `enforce_local_budgets=False` to the existing `HostManuscripts`/`TranslationPipeline` adapter. Future B/C implementations must share this execution policy. Cumulative counters are still recorded, but cannot terminate or discard normal work, including when an old checkpoint contains low budget settings. `historical_diagnostic=True` explicitly selects the separately labeled historical behavior. Production callers retain their default policy, single-request output limits and bounded request retries.
+[取消实验中的本地消费上限，验证真实代理行为](https://github.com/vincentshuo/Edison/issues/71) changes the isolated experiment only. Main A execution supplies `enforce_local_budgets=False` to the existing `HostManuscripts`/`TranslationPipeline` adapter. Future B/C implementations must share this execution policy. Cumulative counters are still recorded, but cannot terminate or discard normal work, including when an old checkpoint contains low budget settings. `historical_diagnostic=True` explicitly selects the separately labeled historical behavior. Production callers retain their default policy, single-request output limits and bounded request retries.
 
 ## Observable accounting
 

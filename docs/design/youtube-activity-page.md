@@ -44,7 +44,7 @@ Vegapunk 的呼吸光点是视觉动画，不构成后台存活证明。迁入�
 
 ## 上游复用候选
 
-来源：`https://github.com/v6582374-netizen/Vegapunk.git`，固定版本 `f8733e1367501781b0e6cc73b064bc1b2fcebbf8`。核对时上游工作树干净。根许可证 Apache-2.0，嵌入的 OpenWorker 子树许可证 MIT；迁入时保留两层来源与适用许可证。
+来源：`https://github.com/vincentshuo/Vegapunk.git`，固定版本 `f8733e1367501781b0e6cc73b064bc1b2fcebbf8`。核对时上游工作树干净。根许可证 Apache-2.0，嵌入的 OpenWorker 子树许可证 MIT；迁入时保留两层来源与适用许可证。
 
 以下路径相对 `Vegapunk/desktop/openworker/upstream/surfaces/gui/src/`：
 

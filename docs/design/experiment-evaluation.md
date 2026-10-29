@@ -1,6 +1,6 @@
 # Fixed samples and comparison evidence
 
-This module supports the isolated comparison specified in [Edison 长内容处理的隔离对照与替换决策验证](https://github.com/v6582374-netizen/Edison/issues/68) and [建立可复现的样本与评价流程](https://github.com/v6582374-netizen/Edison/issues/75). It does not start production services, acquire new sources, create a model client or certify translation quality.
+This module supports the isolated comparison specified in [Edison 长内容处理的隔离对照与替换决策验证](https://github.com/vincentshuo/Edison/issues/68) and [建立可复现的样本与评价流程](https://github.com/vincentshuo/Edison/issues/75). It does not start production services, acquire new sources, create a model client or certify translation quality.
 
 ## Private fixed samples
 

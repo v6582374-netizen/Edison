@@ -1,6 +1,6 @@
 # Direct faithful translation in the isolated comparison
 
-[方案 B](https://github.com/v6582374-netizen/Edison/issues/72) is selected through the same `run_baseline` preparation entry as the existing A mechanism. It uses the same `PreparationService`, `HostManuscripts`, conservative normalized source and real versioned workspace. Production construction and default settings remain unchanged.
+[方案 B](https://github.com/vincentshuo/Edison/issues/72) is selected through the same `run_baseline` preparation entry as the existing A mechanism. It uses the same `PreparationService`, `HostManuscripts`, conservative normalized source and real versioned workspace. Production construction and default settings remain unchanged.
 
 ## Execution contract
 

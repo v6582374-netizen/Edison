@@ -10,7 +10,7 @@ minimalism 专注模块已移除；items 物品模块仅保留在本机忽略目
 
 ## 下载
 
-[Edison v0.2.1 — 首个桌面发行版](https://github.com/v6582374-netizen/Edison/releases/tag/v0.2.1) 面向 Apple Silicon、macOS 14 及以上系统。下载 DMG 后将 Edison 拖入 Applications，也可使用 ZIP 包；校验文件随版本提供。
+[Edison v0.2.1 — 首个桌面发行版](https://github.com/vincentshuo/Edison/releases/tag/v0.2.1) 面向 Apple Silicon、macOS 14 及以上系统。下载 DMG 后将 Edison 拖入 Applications，也可使用 ZIP 包；校验文件随版本提供。
 
 此版本采用本地 ad-hoc 签名，未经 Apple 公证。macOS 可能要求在“系统设置 → 隐私与安全性”中确认打开。更新通过手动下载安装完成。
 
